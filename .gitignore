@@ -13,3 +13,7 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Local databases (user accounts live on the device, never in the repo)
+*.db
+*.db-journal
