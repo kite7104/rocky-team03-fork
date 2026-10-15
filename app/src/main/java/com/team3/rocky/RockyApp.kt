@@ -64,6 +64,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.team3.rocky.auth.AccountScreen
+import com.team3.rocky.auth.AuthRepository
+import com.team3.rocky.auth.LoginScreen
+import com.team3.rocky.auth.SignUpScreen
+import com.team3.rocky.auth.User
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,6 +76,9 @@ import java.util.Locale
 
 // ---------- 화면 목록 ----------
 sealed class Screen {
+    object Login : Screen()                                       // 0. 로그인
+    object SignUp : Screen()                                      // 0-1. 회원가입
+    object Account : Screen()                                     // 0-2. 내 정보·로그아웃
     object Home : Screen()                                        // 1. 홈
     object Storage : Screen()                                     // 1-2. 보관함
     object Instruments : Screen()                                 // 2. 악기 선택
@@ -82,20 +90,37 @@ sealed class Screen {
 
 @Composable
 fun RockyApp() {
-    val stack = remember { mutableStateListOf<Screen>(Screen.Home) }
+    val ctx = LocalContext.current
+    val auth = remember { AuthRepository(ctx) }
+    // 앱을 켤 때 로그인 상태가 남아 있으면 바로 홈, 아니면 로그인 화면에서 시작한다.
+    var user by remember { mutableStateOf(auth.currentUser()) }
+    val stack = remember { mutableStateListOf(if (user != null) Screen.Home else Screen.Login) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var songTitle by remember { mutableStateOf("") }
 
     fun go(s: Screen) { stack.add(s) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    // 로그인·로그아웃 뒤에는 이전 화면으로 돌아갈 수 없게 쌓인 화면을 비운다.
+    fun restart(s: Screen) { stack.clear(); stack.add(s) }
+    fun signedIn(u: User) { user = u; restart(Screen.Home) }
 
     BackHandler(enabled = stack.size > 1) { back() }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (val s = stack.last()) {
+            Screen.Login -> LoginScreen(auth, onLoggedIn = ::signedIn, onSignUp = { go(Screen.SignUp) })
+            Screen.SignUp -> SignUpScreen(auth, onBack = { back() }, onSignedUp = ::signedIn)
+            Screen.Account -> user?.let { u ->
+                AccountScreen(u, onBack = { back() }, onLogout = {
+                    auth.logout(); user = null; restart(Screen.Login)
+                })
+            }
             Screen.Home -> HomeScreen(
-                onNew = { selected = emptySet(); songTitle = ""; go(Screen.Instruments) },
+                nickname = user?.nickname.orEmpty(),
+                // 회원가입 때 고른 악기를 새 악보의 기본 선택으로 쓴다.
+                onNew = { selected = user?.instruments.orEmpty().toSet(); songTitle = ""; go(Screen.Instruments) },
                 onStorage = { go(Screen.Storage) },
+                onAccount = { go(Screen.Account) },
             )
             Screen.Storage -> StorageScreen(
                 onBack = { back() },
@@ -169,12 +194,16 @@ fun Page(
 
 // ---------- 1. 홈 ----------
 @Composable
-fun HomeScreen(onNew: () -> Unit, onStorage: () -> Unit) {
+fun HomeScreen(nickname: String, onNew: () -> Unit, onStorage: () -> Unit, onAccount: () -> Unit) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val count = remember { WorkStore.load(ctx).size }
     Column(Modifier.fillMaxSize().padding(24.dp)) {
-        Spacer(Modifier.height(48.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("${nickname}님, 반가워요", color = cs.onSurfaceVariant, modifier = Modifier.weight(1f), maxLines = 1)
+            TextButton(onClick = onAccount) { Text("내 정보") }
+        }
+        Spacer(Modifier.height(16.dp))
         Text("ROCKY", fontSize = 48.sp, fontWeight = FontWeight.Black, color = cs.primary)
         Text("어떤 곡이든, 우리 밴드 악보로", fontSize = 16.sp, color = cs.onSurfaceVariant)
         Spacer(Modifier.height(48.dp))

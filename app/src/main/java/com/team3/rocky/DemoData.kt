@@ -9,6 +9,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.core.content.FileProvider
+import com.team3.rocky.auth.AuthRepository
 import java.io.File
 
 /*
@@ -67,10 +68,12 @@ data class Work(val id: Long, val title: String, val instruments: List<String>, 
 
 object WorkStore {
     private const val PREF = "rocky"
-    private const val KEY = "works"
+
+    // 보관함은 회원마다 따로 저장한다. 로그인 전에는 쓰지 않는다.
+    private fun key(ctx: Context) = "works_" + (AuthRepository.currentUserId(ctx) ?: "guest")
 
     fun load(ctx: Context): List<Work> {
-        val raw = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(KEY, "") ?: ""
+        val raw = ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).getString(key(ctx), "") ?: ""
         return raw.split("\n").filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t")
             if (p.size < 4) null
@@ -84,7 +87,7 @@ object WorkStore {
             val title = it.title.replace("\t", " ").replace("\n", " ")
             "${it.id}\t$title\t${it.instruments.joinToString(",")}\t${it.date}"
         }
-        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(KEY, raw).apply()
+        ctx.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit().putString(key(ctx), raw).apply()
     }
 }
 
