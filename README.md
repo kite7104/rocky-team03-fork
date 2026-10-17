@@ -1,7 +1,7 @@
-# ROCKY – Iteration 1 Demo (MVP)
+# ROCKY — Iteration 2 Working Demo
 
 > 어떤 곡이든, 우리 밴드 악보로.
-> 음원을 올리면 피아노·드럼·베이스·기타 밴드 악보로 바꿔주고, 원곡에 없는 악기 파트는 AI가 새로 만들어주는 안드로이드 앱
+> 밴드 악보 제작을 위한 안드로이드 앱의 로그인, 데모 곡 선택, 악보·오디오 확인, 저장·공유 흐름을 시연합니다.
 
 Team 3 (영양실조) · 김채연, 박재욱, 조수빈, 홍순형
 
@@ -10,62 +10,58 @@ Team 3 (영양실조) · 김채연, 박재욱, 조수빈, 홍순형
 ## 1. How to run
 
 ### 개발·실행 환경
-| 항목 | 버전 |
+이 데모는 Windows 11에서 Android Studio로 작업했습니다. Android Studio의 정확한 빌드 번호와 촬영 기기 모델은 기록되지 않았습니다. 프로젝트에 고정된 도구·플랫폼 버전은 다음과 같습니다.
+
+| 항목 | 버전·요구사항 |
 |---|---|
-| OS | macOS |
-| IDE | Android Studio (버전 기입) |
-| Language / UI | Kotlin, Jetpack Compose (Material 3) |
-| Min SDK | API 24 (Android 7.0) |
-| 테스트 기기 | Android Emulator (기기명 기입) / 실제 폰 (기종 기입) |
+| 로컬 OS / IDE | Windows 11 / Android Studio |
+| 빌드 | Gradle Wrapper 9.5.0, Android Gradle Plugin 9.3.3 |
+| 언어 / UI | Kotlin 2.2.10, Jetpack Compose (Material 3), Java 11 소스 호환성 |
+| Android SDK | compile/target SDK 37, min SDK 34 (Android 14) |
+| 실행 기기 | API 34 이상 Android Emulator 또는 Android 기기 |
 
 ### 실행 방법
 1. 이 저장소를 받아요.
    ```bash
-   git clone <저장소 주소>
-   cd <저장소 폴더>
-   git checkout iteration-1-demo
+   git clone https://github.com/snuhcs-course/swpp-2026-project-team-03.git
+   cd swpp-2026-project-team-03
+   git switch iteration-2-demo
    ```
-2. Android Studio → **Open** → 이 폴더를 선택해요.
-3. Gradle Sync가 끝날 때까지 기다려요.
-4. 에뮬레이터 또는 USB 디버깅을 켠 안드로이드 폰을 선택하고 **▶ Run**을 눌러요.
+2. Android Studio에서 저장소 루트 폴더를 열고 Android SDK 37을 설치하거나 설치 안내에 따라 설정합니다. Gradle Sync를 완료합니다. 로컬 SDK 경로는 각자 `local.properties`에 설정하며 이 파일은 Git에 포함하지 않습니다.
+3. API 34 이상 에뮬레이터 또는 USB 디버깅된 기기를 선택해 `app`을 실행합니다. 별도 서버·GPU·외부 API 키는 필요하지 않습니다.
+4. 새 설치에서는 이메일 회원가입 후 로그인됩니다. 홈에서 **NEW → 악기 선택 → 데모 곡으로 체험하기 → 악보 만들기 시작**을 눌러 결과 화면을 확인합니다.
 
 ---
 
 ## 2. What this demo demonstrates
 
-### 구현한 화면 (사용자 흐름)
+### 구현한 화면과 사용자 흐름
 | # | 화면 | 기능 |
 |---|---|---|
-| 0 | 로그인 · 회원가입 · 내 정보 | 이메일 회원가입, 로그인, 로그아웃 (아래 "회원 기능" 참고) |
+| 0 | 로그인 · 회원가입 · 내 정보 | 이메일 회원가입, 로그인, 로그아웃, 로그인 상태 유지 (아래 "회원 기능" 참고) |
 | 1 | 홈 | NEW(새 악보 만들기), STORAGE(보관함) |
 | 2 | 악기 선택 | "당신을 위한 악보를 만드세요" – 피아노/드럼/베이스/기타 복수 선택 |
-| 3 | 음원 업로드 | 기기에서 음원 파일 선택 또는 데모 곡 선택 |
+| 3 | 음원 업로드 | 기기에서 음원 파일 선택 또는 Immigrant Song 데모 곡 선택 |
 | 4 | 처리 중 | 채보 중 → 박자 맞추는 중 → 밴드 편곡 중 단계 표시 |
 | 5 | 결과 | 밴드 전체 또는 악기별 악보 보기·재생, AI 생성 악기 표시(✨), 저장 |
 | 6 | 내보내기 | 악보 PDF·MIDI 파일 공유 (카카오톡, 메일, 드라이브 등) |
 
-### 시연 범위 (중요)
-- **화면 흐름과 저장·재생·공유 기능은 실제로 동작**합니다.
-- 결과 화면에서 악기 버튼을 누르면 해당 악기의 악보와 음원으로 전환됩니다. 같은 버튼을 다시 누르면 밴드 전체 보기·재생으로 돌아갑니다.
-- **AI 처리(채보·박자 정렬·편곡)는 아직 앱과 연결되지 않았습니다.** 어떤 파일을 업로드해도 `app/src/main/assets/demo/`에 미리 넣어 둔 결과가 표시됩니다.
-- 미리 넣어 둔 결과 파일은 아래 모델들을 실제로 실행해서 만든 결과입니다. (사용한 곡·모델 기입)
+### Iteration 2의 주요 진전
+- 기기 내부 SQLite에 저장하는 이메일 회원가입·로그인과 로그인 상태 유지, 로그아웃 및 회원별 보관함 분리를 추가했습니다. 비밀번호는 원문 대신 salt가 포함된 PBKDF2-HMAC-SHA256 해시로 저장합니다.
+- 이전 Fireflies 데모를 Led Zeppelin의 **Immigrant Song** 데모로 교체했습니다. 새 MIDI와 그 곡의 밴드·악기별 악보 이미지, 오디오, 밴드 PDF를 앱 자산으로 묶었습니다.
+- Iteration 1의 악기 선택, 결과 악보·악기별 재생, 저장, PDF/MIDI 공유 흐름을 새 로그인 및 데모 곡과 함께 보여줍니다.
 
-### 이번 Iteration에서 검증한 것 (Technical feasibility)
-| 검증 항목 | 결과 |
-|---|---|
-| MuScriptor로 음원 → 악기별 MIDI 채보 | (결과 기입) |
-| MIDI-GPT로 없는 악기 파트 생성 (BabySlakh 20곡 × 4악기) | 80건 중 78건 생성 성공. 화성·조성은 원곡과 대체로 맞지만 음 밀도가 원곡보다 낮음 |
-| 채보 MIDI를 악보로 볼 때의 문제 | 채보 결과가 실제 박자와 정렬되지 않아(기본 120 BPM) 셋잇단·붙임줄이 많은 악보가 됨 → 박자 추적(beat_this) 단계 필요 확인 |
-| 생성 모델 후보 | REMI-z(밴드 편곡) 적용 검토 중 |
-
-### 다음 Iteration 계획
-- 음원 업로드 → 채보 → 박자 정렬 → 밴드 편곡을 서버에서 실제로 실행하고 앱과 연결
-- 서버에서 생성한 악기별 악보·음원을 앱에 전달
+### 시연 범위와 한계
+- 로그인·회원별 저장·화면 전환·미리 넣은 악보 표시·오디오 재생·파일 공유는 앱에서 동작합니다. 로그인과 사용자 데이터는 **이 기기 안에만** 저장되며 서버와 동기화되지 않습니다.
+- 음원 선택은 파일명만 읽습니다. 처리 중 화면은 시뮬레이션이며, 음원 채보·박자 정렬·편곡 모델은 아직 앱에 연결되지 않았습니다. 어떤 파일을 선택해도 `app/src/main/assets/demo/`의 동일한 Immigrant Song 결과가 표시됩니다.
+- 데모 MIDI는 별도로 생성한 `muscriptor+midigpt.mid`를 사용했습니다. 앱은 실행 중에 이 MIDI나 악보를 생성하지 않습니다.
 
 ---
 
 ## 3. Demo video
-- 영상 링크: [ROCKY Demo video (Google Drive)](https://drive.google.com/file/d/16sLdD9x2Bg739iO0UaESiY7LWRzARTw-/view?usp=drive_link)
+
+- [Iteration 2 working demo — 로그인과 Immigrant Song 시연](https://drive.google.com/file/d/1wVii7g0WqUVoUHAEtb1jWcls4gWSXsjV/view?usp=sharing)
+- [Iteration 1 demo — 이전 버전 참고 영상](https://drive.google.com/file/d/16sLdD9x2Bg739iO0UaESiY7LWRzARTw-/view?usp=drive_link)
 
 ---
 
@@ -80,7 +76,7 @@ Team 3 (영양실조) · 김채연, 박재욱, 조수빈, 홍순형
 | 악기별 재생 | `piano.mp3`, `drums.mp3`, `bass.mp3`, `guitar.mp3` (또는 지원되는 다른 음원 형식) |
 | 내보내기 | `band.pdf`, `band.mid` |
 
-현재 악기별 악보와 음원은 데모 `band.mid`에서 각 파트를 분리해 MuseScore로 내보낸 파일입니다.
+현재 악기별 악보와 음원은 데모 `band.mid`에서 각 파트를 분리해 MuseScore로 내보낸 파일입니다. 사용된 악보 파일은 MuseScore 4.7.5로 저장되었습니다.
 
 데모 곡 제목과 AI 생성 악기 표시는 `app/src/main/java/com/team3/rocky/DemoData.kt`의 `SONG_TITLE`, `AI_GENERATED`에서 바꿉니다.
 

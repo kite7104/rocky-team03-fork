@@ -13,7 +13,7 @@ import com.team3.rocky.auth.AuthRepository
 import java.io.File
 
 /*
- * ROCKY Iteration 1 시연 설정
+ * ROCKY Iteration 2 시연 설정
  * - 실제 모델 연결 없이, app/src/main/assets/demo/ 에 넣어둔 결과 파일을 보여줍니다.
  * - 파일 이름 규칙: <악기>.png(악보 이미지), <악기>.mp3(악기 음원), <악기>.mid, <악기>.pdf,
  *   original.mp3(원곡), band.mid / band.pdf(밴드 전체, 선택)
@@ -24,7 +24,7 @@ object Demo {
 
     // 결과 화면 파일 이름: band.png(또는 band-1.png, band-2.png …), band.mp3, band.pdf, band.mid
     const val BAND = "band"
-    const val SONG_TITLE = "데모 곡 (Fireflies - Owl City)"
+    const val SONG_TITLE = "데모 곡 (Immigrant Song - Led Zeppelin)"
 
     // 화면에 보이는 순서
     val INSTRUMENTS = listOf("piano", "drums", "bass", "guitar")

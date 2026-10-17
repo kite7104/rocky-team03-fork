@@ -366,7 +366,7 @@ fun UploadScreen(onBack: () -> Unit, onStart: (String) -> Unit) {
         }
         Spacer(Modifier.height(16.dp))
         Text(
-            "※ Iteration 1 시연 버전: 어떤 파일을 올려도 미리 준비한 데모 결과가 표시돼요.",
+            "※ Iteration 2 시연 버전: 어떤 파일을 올려도 미리 준비한 데모 결과가 표시돼요.",
             fontSize = 12.sp, color = cs.onSurfaceVariant,
         )
     }
