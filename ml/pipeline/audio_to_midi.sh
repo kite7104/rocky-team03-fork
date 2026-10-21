@@ -12,6 +12,10 @@
 # transcription.log.  Steps whose output already exists are skipped.
 set -euo pipefail
 
+# Pinned so every run, on any machine, uses the versions the results were checked with.
+MUSCRIPTOR=muscriptor==0.4.0
+DEMUCS=demucs==4.1.0
+
 input=$1
 out_root=${2:-outputs/pipeline}
 model=${3:-large}
@@ -24,7 +28,7 @@ mkdir -p "$out"
 
 if [[ ! -s "$out/stems/no_vocals.wav" ]]; then
   echo "[1/2] Demucs: removing vocals from $name"
-  uvx --quiet --python 3.11 --with demucs --with soundfile --with "torch<2.6" --with "torchaudio<2.6" \
+  uvx --quiet --python 3.11 --with "$DEMUCS" --with soundfile --with "torch<2.6" --with "torchaudio<2.6" \
     python "$here/separate_stems.py" "$input" "$out/stems" --model htdemucs --no-vocals-mix \
     > "$out/demucs.log" 2>&1
 else
@@ -32,7 +36,7 @@ else
 fi
 
 echo "[2/2] MuScriptor ($model): transcribing"
-uvx --python 3.13 muscriptor transcribe "$out/stems/no_vocals.wav" --model "$model" --device "$device" \
+uvx --python 3.13 --from "$MUSCRIPTOR" muscriptor transcribe "$out/stems/no_vocals.wav" --model "$model" --device "$device" \
   --output "$out/transcription.mid" --format midi --detect-tempo false \
   < /dev/null > "$out/transcription.log" 2>&1
 echo "EOS warnings: $(grep -c 'did not emit EOS' "$out/transcription.log" || true)"

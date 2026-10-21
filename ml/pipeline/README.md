@@ -69,12 +69,15 @@ belongs to the arrangement stage.
 The team workspace on [SGS](https://sgs-docs.snucse.org/) has one A100 GPU and
 a 20 GiB volume, `muscriptor-data`, that already holds the MuScriptor `large`
 weights. No Hugging Face login is needed there. Set up `kubectl` and
-`kubelogin` as the SGS manual describes, then, from the repository root:
+`kubelogin` as the SGS manual describes, and download the kubeconfig from the
+workspace page on https://sgs.snucse.org. In October 2026 SGS moved to a new
+cluster (`zest.snucse.org`); a kubeconfig from before the move no longer
+connects, so download it again if `kubectl` cannot find the server. Then, from
+the repository root:
 
 ```bash
-# 1. Start the file-transfer pod (no GPU). The volume already exists; this
-#    does not recreate or erase it.
-kubectl apply -f ml/pipeline/sgs/storage.yaml
+# 1. Start the file-transfer pod (no GPU).
+kubectl apply -f ml/pipeline/sgs/files-pod.yaml
 kubectl wait --for=condition=Ready pod/rocky-files
 
 # 2. Copy the pipeline code and the songs to the volume.
@@ -115,7 +118,8 @@ Things to know:
 - About 3.7 GiB of the volume is free. Put the weights of another large model
   on a new volume (the workspace quota has 30 GiB left) and mount both.
 - Deleting the `muscriptor-data` volume claim erases the weights and the
-  installed packages.
+  installed packages. `sgs/volume.yaml` creates the volume; it is needed only
+  in a new workspace.
 
 ## Adding a stage
 
@@ -141,3 +145,5 @@ stage can be rerun on a song without separating it again.
   0.38 on ten MulTTiPop segments with `medium`, higher on guitar-band songs
   and lower on synth-heavy ones. `large` has not been scored on that set.
 - The script processes one song per call.
+- MuScriptor 0.4.0 and Demucs 4.1.0 are pinned in `audio_to_midi.sh`. Change
+  them there, and recheck the output, to use newer releases.
