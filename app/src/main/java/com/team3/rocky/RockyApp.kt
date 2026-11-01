@@ -84,7 +84,24 @@ import com.team3.rocky.progress.JobProgress
 import com.team3.rocky.progress.ProgressSource
 import com.team3.rocky.progress.Stage
 import com.team3.rocky.progress.formatEta
+import com.team3.rocky.server.ApiException
+import com.team3.rocky.server.JobFailedException
+import com.team3.rocky.server.PdfPages
+import com.team3.rocky.server.RockyApi
+import com.team3.rocky.server.ScoreStore
+import com.team3.rocky.server.ServerProgress
+import com.team3.rocky.server.ServerSettings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -120,6 +137,15 @@ fun RockyApp() {
     val stack = remember { mutableStateListOf(if (user != null) Screen.Home else Screen.Login) }
     var selected by remember { mutableStateOf(setOf<String>()) }
     var songTitle by remember { mutableStateOf("") }
+    // 사용자가 고른 음원. null이면 데모 곡(서버 없이 미리 준비한 결과).
+    var request by remember { mutableStateOf<ScoreRequest?>(null) }
+
+    fun newWork(id: Long, instruments: List<String>) = Work(
+        id = id,
+        title = songTitle,
+        instruments = instruments,
+        date = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date()),
+    )
 
     fun go(s: Screen) { stack.add(s) }
     fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
@@ -162,20 +188,25 @@ fun RockyApp() {
             )
             Screen.Upload -> UploadScreen(
                 onBack = { back() },
-                onStart = { title -> songTitle = title; go(Screen.Processing) },
+                onStart = { title, audio ->
+                    songTitle = title
+                    request = audio?.let { (uri, fileName) ->
+                        ScoreRequest(uri, fileName, title, Demo.INSTRUMENTS.filter { it in selected })
+                    }
+                    go(Screen.Processing)
+                },
             )
             Screen.Processing -> ProcessingScreen(
                 title = songTitle,
-                onDone = {
-                    val work = Work(
-                        id = System.currentTimeMillis(),
-                        title = songTitle,
-                        instruments = Demo.INSTRUMENTS.filter { it in selected },
-                        date = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date()),
-                    )
+                request = request,
+                onDone = { serverWork ->
+                    // serverWork가 null이면 데모 결과로 보여준다.
+                    val work = serverWork?.copy(title = songTitle)
+                        ?: newWork(System.currentTimeMillis(), Demo.INSTRUMENTS.filter { it in selected })
                     stack.removeAt(stack.lastIndex)          // 처리 중 화면은 뒤로가기에서 제외
                     go(Screen.Result(work, fresh = true))
                 },
+                onExit = { back() },
             )
             is Screen.Result -> ResultScreen(
                 work = s.work,
@@ -410,17 +441,27 @@ fun InstrumentTile(inst: String, on: Boolean, modifier: Modifier, onClick: () ->
 
 // ---------- 3. 음원 업로드 ----------
 @Composable
-fun UploadScreen(onBack: () -> Unit, onStart: (String) -> Unit) {
+fun UploadScreen(onBack: () -> Unit, onStart: (title: String, audio: Pair<Uri, String>?) -> Unit) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     var picked by remember { mutableStateOf<String?>(null) }
+    // 고른 파일과 원래 파일 이름(확장자 포함). 데모 곡이면 null.
+    var audio by remember { mutableStateOf<Pair<Uri, String>?>(null) }
+    var editServer by remember { mutableStateOf(false) }
+    var serverUrl by remember { mutableStateOf(ServerSettings.url(ctx)) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) picked = displayName(ctx, uri)
+        if (uri != null) {
+            picked = displayName(ctx, uri)
+            audio = uri to fileName(ctx, uri)
+        }
     }
     val shape = RoundedCornerShape(24.dp)
+    if (editServer) {
+        ServerDialog(onDismiss = { editServer = false; serverUrl = ServerSettings.url(ctx) })
+    }
     Page("음원 업로드", onBack, bottom = {
         Button(
-            onClick = { onStart(picked ?: Demo.SONG_TITLE) }, enabled = picked != null,
+            onClick = { onStart(picked ?: Demo.SONG_TITLE, audio) }, enabled = picked != null,
             modifier = Modifier.fillMaxWidth().height(56.dp),
         ) { Text("악보 만들기 시작", fontSize = 17.sp) }
     }) {
@@ -447,27 +488,144 @@ fun UploadScreen(onBack: () -> Unit, onStart: (String) -> Unit) {
             )
         }
         Spacer(Modifier.height(16.dp))
-        OutlinedButton(onClick = { picked = Demo.SONG_TITLE }, modifier = Modifier.fillMaxWidth().height(50.dp)) {
+        OutlinedButton(
+            onClick = { picked = Demo.SONG_TITLE; audio = null },
+            modifier = Modifier.fillMaxWidth().height(50.dp),
+        ) {
             Text("데모 곡으로 체험하기")
         }
         Spacer(Modifier.height(16.dp))
         Text(
-            "※ Iteration 2 시연 버전: 어떤 파일을 올려도 미리 준비한 데모 결과가 표시돼요.",
+            "올린 음원은 ROCKY 서버에서 악보로 바뀌어요. 곡 길이에 따라 몇 분 걸려요.\n" +
+                "데모 곡은 서버 없이 미리 준비한 결과를 바로 보여드려요.",
             fontSize = 12.sp, color = cs.onSurfaceVariant,
         )
+        TextButton(onClick = { editServer = true }, modifier = Modifier.padding(top = 4.dp)) {
+            Text(
+                "서버: " + serverUrl.ifBlank { "설정 안 됨" },
+                fontSize = 12.sp, color = cs.onSurfaceVariant, maxLines = 1,
+            )
+        }
     }
 }
 
-// ---------- 4. 처리 중 (진행률 · 남은 시간) ----------
+/** 서버 주소·키 바꾸기. 기본값은 빌드 때 local.properties에서 넣은 값. */
 @Composable
-fun ProcessingScreen(title: String, onDone: () -> Unit, source: ProgressSource = DemoProgress) {
+fun ServerDialog(onDismiss: () -> Unit) {
+    val ctx = LocalContext.current
+    var url by remember { mutableStateOf(ServerSettings.url(ctx)) }
+    var key by remember { mutableStateOf(ServerSettings.key(ctx)) }
+    var checking by remember { mutableStateOf(false) }
+    var result by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(checking) {
+        if (checking) {
+            val ok = withContext(Dispatchers.IO) { RockyApi(url, key).health() }
+            result = if (ok) "연결됨 ✓" else "연결할 수 없어요"
+            checking = false
+        }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("서버 설정") },
+        text = {
+            Column {
+                OutlinedTextField(url, { url = it; result = null }, label = { Text("주소 (https://…)") }, singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(key, { key = it; result = null }, label = { Text("키") }, singleLine = true)
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = { checking = true }, enabled = !checking && url.isNotBlank()) {
+                    Text(if (checking) "확인 중…" else result ?: "연결 확인")
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { ServerSettings.save(ctx, url, key); onDismiss() }) { Text("저장") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("취소") } },
+    )
+}
+
+// ---------- 4. 처리 중 (진행률 · 남은 시간) ----------
+/** 서버로 보낼 악보 만들기 요청. requested는 사용자가 고른 악기(없는 악기는 서버가 새로 만든다). */
+data class ScoreRequest(val uri: Uri, val fileName: String, val title: String, val requested: List<String>)
+
+/**
+ * request가 null이면 데모 진행을 보여주고 onDone(null).
+ * 아니면 서버에 올리고 → 진행 상태를 받고 → 결과를 폰에 받아 onDone(Work).
+ * 실패하면 다시 시도 / 데모 결과 보기 / 돌아가기를 고르게 한다.
+ */
+@Composable
+fun ProcessingScreen(
+    title: String,
+    request: ScoreRequest?,
+    onDone: (Work?) -> Unit,
+    onExit: () -> Unit,
+    demoSource: ProgressSource = DemoProgress,
+) {
+    val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     var state by remember { mutableStateOf<JobProgress?>(null) }
-    LaunchedEffect(Unit) {
-        source.track("demo").collect { state = it }
-        delay(500)
-        onDone()
+    var phase by remember { mutableStateOf<String?>(null) }      // 진행률이 없는 단계 안내
+    var failure by remember { mutableStateOf<String?>(null) }
+    var attempt by remember { mutableIntStateOf(0) }
+    LaunchedEffect(attempt) {
+        failure = null
+        state = null
+        if (request == null) {
+            demoSource.track("demo").collect { state = it }
+            delay(500)
+            onDone(null)
+            return@LaunchedEffect
+        }
+        try {
+            if (!ServerSettings.isConfigured(ctx)) throw IOException("서버 주소가 설정되지 않았어요")
+            val api = RockyApi.from(ctx)
+            phase = "음원을 서버에 올리는 중이에요"
+            val jobId = withContext(Dispatchers.IO) {
+                val input = ctx.contentResolver.openInputStream(request.uri)
+                    ?: throw IOException("음원 파일을 열 수 없어요")
+                input.use { api.upload(it, request.fileName, request.title, request.requested) }
+            }
+            phase = null
+            ServerProgress(api).track(jobId).collect { state = it }
+            phase = "완성된 악보를 받는 중이에요"
+            val workId = System.currentTimeMillis()
+            val local = withContext(Dispatchers.IO) { ScoreStore.download(ctx, api, jobId, workId) }
+            onDone(
+                Work(
+                    id = workId,
+                    title = request.title,
+                    instruments = Demo.INSTRUMENTS.filter { it in local.result.instruments.keys },
+                    date = SimpleDateFormat("yyyy.MM.dd HH:mm", Locale.KOREA).format(Date()),
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            phase = null
+            failure = failureMessage(e)
+        }
     }
+
+    val msg = failure
+    if (msg != null) {
+        Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center) {
+            Text(title, fontSize = 15.sp, color = cs.onSurfaceVariant, maxLines = 1)
+            Spacer(Modifier.height(6.dp))
+            Text("악보를 만들지 못했어요", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Text(msg, color = cs.onSurfaceVariant)
+            Spacer(Modifier.height(28.dp))
+            Button(onClick = { attempt++ }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("다시 시도") }
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(onClick = { onDone(null) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text("데모 결과로 보기")
+            }
+            TextButton(onClick = onExit, modifier = Modifier.fillMaxWidth()) { Text("돌아가기") }
+        }
+        return
+    }
+
     val p = state
     // 서버는 5초 구간이 끝날 때마다 한 번씩 알려주므로, 그 사이를 부드럽게 이어 준다.
     val shown by animateFloatAsState(
@@ -488,6 +646,10 @@ fun ProcessingScreen(title: String, onDone: () -> Unit, source: ProgressSource =
         Text(title, fontSize = 15.sp, color = cs.onSurfaceVariant, maxLines = 1)
         Spacer(Modifier.height(6.dp))
         Text("악보를 만드는 중이에요", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        phase?.let {
+            Spacer(Modifier.height(6.dp))
+            Text(it, fontSize = 14.sp, color = cs.primary)
+        }
         Spacer(Modifier.height(20.dp))
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
@@ -561,6 +723,9 @@ fun ResultScreen(
     var selectedPart by remember { mutableStateOf(bandPart) }
     val player = remember { MediaPlayer() }
     DisposableEffect(Unit) { onDispose { player.release() } }
+    // 서버에서 받은 결과가 폰에 있으면 그것을, 없으면 데모 결과를 보여준다.
+    val local = remember(work.id) { ScoreStore.load(ctx, work.id) }
+    val aiParts = local?.generated ?: Demo.AI_GENERATED
 
     fun selectPart(inst: String) {
         if (playing) {
@@ -577,14 +742,16 @@ fun ResultScreen(
             return
         }
         val base = selectedPart ?: Demo.BAND
-        val name = Assets.find(ctx, base, AUDIO_EXT)
-        if (name == null) {
+        // 서버 결과는 MIDI로 들려준다 (안드로이드 기본 MIDI 소리).
+        val path = if (local != null) local.midi(selectedPart)?.absolutePath
+        else Assets.find(ctx, base, AUDIO_EXT)?.let { Assets.toCache(ctx, it).absolutePath }
+        if (path == null) {
             Toast.makeText(ctx, "${Demo.kor(base)} 음원 파일이 없어요", Toast.LENGTH_SHORT).show()
             return
         }
         try {
             player.reset()
-            player.setDataSource(Assets.toCache(ctx, name).absolutePath)
+            player.setDataSource(path)
             player.prepare()
             player.setOnCompletionListener { playing = false }
             player.start()
@@ -596,12 +763,20 @@ fun ResultScreen(
 
     // 선택한 악기의 악보, 또는 아무 악기도 선택하지 않았을 때 밴드 전체 악보
     val scoreBase = selectedPart ?: Demo.BAND
-    val pages = remember(scoreBase) {
-        val pageNo = Regex("^${Regex.escape(scoreBase)}(-(\\d+))?\\.(png|jpg|jpeg|webp)$")
-        Assets.list(ctx)
-            .mapNotNull { n -> pageNo.find(n)?.let { m -> (m.groupValues[2].toIntOrNull() ?: 0) to n } }
-            .sortedBy { it.first }
-            .mapNotNull { (_, n) -> ctx.assets.open("${Demo.DIR}/$n").use { BitmapFactory.decodeStream(it) } }
+    val widthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
+    val pages by produceState<List<android.graphics.Bitmap>?>(null, scoreBase) {
+        value = null
+        value = withContext(Dispatchers.IO) {
+            if (local != null) {
+                local.pdf(selectedPart)?.let { runCatching { PdfPages.render(it, widthPx) }.getOrNull() }.orEmpty()
+            } else {
+                val pageNo = Regex("^${Regex.escape(scoreBase)}(-(\\d+))?\\.(png|jpg|jpeg|webp)$")
+                Assets.list(ctx)
+                    .mapNotNull { n -> pageNo.find(n)?.let { m -> (m.groupValues[2].toIntOrNull() ?: 0) to n } }
+                    .sortedBy { it.first }
+                    .mapNotNull { (_, n) -> ctx.assets.open("${Demo.DIR}/$n").use { BitmapFactory.decodeStream(it) } }
+            }
+        }
     }
 
     Page(work.title, onBack, bottom = {
@@ -621,7 +796,7 @@ fun ResultScreen(
         // 악기를 다시 누르면 밴드 전체 보기로 돌아간다.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             work.instruments.forEach { inst ->
-                val ai = inst in Demo.AI_GENERATED
+                val ai = inst in aiParts
                 val selected = selectedPart == inst
                 Box(
                     Modifier.weight(1f)
@@ -655,7 +830,7 @@ fun ResultScreen(
                 fontSize = 12.sp, color = cs.primary,
             )
         }
-        if (work.instruments.any { it in Demo.AI_GENERATED }) {
+        if (work.instruments.any { it in aiParts }) {
             Spacer(Modifier.height(6.dp))
             Text("✨ AI 생성: 원곡에 없던 파트를 ROCKY가 새로 만들었어요", fontSize = 12.sp, color = cs.onSurfaceVariant)
         }
@@ -677,9 +852,12 @@ fun ResultScreen(
                 .background(Color.White),
             contentAlignment = Alignment.TopCenter,
         ) {
-            if (pages.isNotEmpty()) {
+            val shownPages = pages
+            if (shownPages == null) {
+                CircularProgressIndicator(Modifier.padding(40.dp))
+            } else if (shownPages.isNotEmpty()) {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    pages.forEach { bmp ->
+                    shownPages.forEach { bmp ->
                         Image(
                             bitmap = bmp.asImageBitmap(), contentDescription = "밴드 악보",
                             modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth,
@@ -688,7 +866,7 @@ fun ResultScreen(
                 }
             } else {
                 Text(
-                    "악보 이미지가 없어요\n(assets/demo/$scoreBase.png)",
+                    if (local != null) "이 파트의 악보 파일이 없어요" else "악보 이미지가 없어요\n(assets/demo/$scoreBase.png)",
                     color = Color.Gray, textAlign = TextAlign.Center, modifier = Modifier.padding(40.dp),
                 )
             }
@@ -701,15 +879,20 @@ fun ResultScreen(
 fun ExportScreen(work: Work, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
-    val files = remember {
-        val all = Assets.list(ctx)
-        listOf("${Demo.BAND}.pdf" to "밴드 악보", "${Demo.BAND}.mid" to "밴드 MIDI").filter { it.first in all }
+    // (파일, 이름표). 서버 결과가 폰에 있으면 그 파일들, 없으면 데모 파일.
+    val files: List<Pair<File, String>> = remember {
+        ScoreStore.load(ctx, work.id)?.exportFiles(Demo::kor) ?: run {
+            val all = Assets.list(ctx)
+            listOf("${Demo.BAND}.pdf" to "밴드 악보", "${Demo.BAND}.mid" to "밴드 MIDI")
+                .filter { it.first in all }
+                .map { (name, label) -> Assets.toCache(ctx, name) to label }
+        }
     }
-    val checked = remember { mutableStateMapOf<String, Boolean>().apply { files.forEach { put(it.first, true) } } }
+    val checked = remember { mutableStateMapOf<String, Boolean>().apply { files.forEach { put(it.first.path, true) } } }
 
     Page("내보내기", onBack, bottom = {
         Button(
-            onClick = { shareFiles(ctx, files.map { it.first }.filter { checked[it] == true }) },
+            onClick = { shareLocalFiles(ctx, files.map { it.first }.filter { checked[it.path] == true }, work.title) },
             enabled = checked.values.any { it },
             modifier = Modifier.fillMaxWidth().height(56.dp),
         ) { Text("공유하기", fontSize = 17.sp) }
@@ -719,27 +902,41 @@ fun ExportScreen(work: Work, onBack: () -> Unit) {
         Text(work.title + " · " + work.instruments.joinToString(" · ") { Demo.kor(it) }, color = cs.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
         if (files.isEmpty()) {
-            Text("assets/demo/ 에 ${Demo.BAND}.pdf · ${Demo.BAND}.mid 파일이 없어요", color = cs.onSurfaceVariant)
+            Text("보낼 수 있는 악보 파일이 없어요", color = cs.onSurfaceVariant)
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(files) { (name, label) ->
+            items(files) { (file, label) ->
                 Row(
                     Modifier.fillMaxWidth()
                         .clip(RoundedCornerShape(14.dp))
                         .background(cs.surface)
-                        .clickable { checked[name] = checked[name] != true }
+                        .clickable { checked[file.path] = checked[file.path] != true }
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Checkbox(checked = checked[name] == true, onCheckedChange = { checked[name] = it })
+                    Checkbox(checked = checked[file.path] == true, onCheckedChange = { checked[file.path] = it })
                     Text(label, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     Text(
-                        name.substringAfterLast('.').uppercase(), fontSize = 12.sp,
+                        file.extension.uppercase(), fontSize = 12.sp,
                         color = cs.primary, modifier = Modifier.padding(end = 12.dp),
                     )
                 }
             }
         }
     }
+}
+
+/** 실패 이유를 사용자가 알아들을 말로. */
+fun failureMessage(e: Exception): String = when (e) {
+    is JobFailedException -> "서버에서 처리하다 멈췄어요.\n(${e.message})"
+    is ApiException -> when (e.code) {
+        401 -> "서버 키가 맞지 않아요. 업로드 화면 아래 '서버'에서 키를 확인해 주세요."
+        413 -> "음원 파일이 너무 커요. 더 짧은 곡이나 MP3로 올려 주세요."
+        415 -> "MP3, WAV, FLAC, M4A 음원만 올릴 수 있어요."
+        404 -> "서버에서 작업을 찾을 수 없어요. 처음부터 다시 해 주세요."
+        else -> "서버가 요청을 처리하지 못했어요. (HTTP ${e.code})"
+    }
+    is IOException -> "서버에 연결할 수 없어요. 인터넷 연결이나 서버 주소를 확인해 주세요.\n(${e.message})"
+    else -> "알 수 없는 오류가 났어요. (${e.message})"
 }

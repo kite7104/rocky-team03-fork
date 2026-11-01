@@ -1,0 +1,56 @@
+# The ROCKY API: a CPU-only pod that stays up. It never uses the GPU itself;
+# for each uploaded song it creates a GPU Job (unified.py) and a CPU Job
+# (publish_scores.py). Code is read from /data/server on the shared volume.
+#
+#   kubectl apply -f server/k8s/rbac.yaml        # once
+#   kubectl create secret generic rocky-api --from-literal=api-key=<any long random text>   # once
+#   kubectl apply -f server/k8s/api-pod.yaml
+#   kubectl port-forward pod/rocky-api 8000:8000   # try it from your laptop
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rocky-api
+  labels:
+    app: rocky-api
+spec:
+  serviceAccountName: rocky-api
+  restartPolicy: Always
+  dnsConfig:
+    options:
+      - name: ndots
+        value: "1"
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: muscriptor-data
+  containers:
+    - name: api
+      image: python:3.12-slim
+      command: ["/bin/bash", "-lc"]
+      args:
+        - >-
+          set -euo pipefail;
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null;
+          pip install -q --cache-dir /data/cache/pip-api -r /data/server/requirements.txt;
+          cd /data/server && exec uvicorn rocky_server.app:app_from_env --factory
+          --host 0.0.0.0 --port 8000
+      env:
+        - name: ROCKY_RUNNER
+          value: kubernetes
+        - name: ROCKY_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: rocky-api
+              key: api-key
+      ports:
+        - containerPort: 8000
+      resources:
+        requests:
+          cpu: "0"
+          memory: "0"
+        limits:
+          cpu: "2"
+          memory: 2Gi
+      volumeMounts:
+        - name: data
+          mountPath: /data

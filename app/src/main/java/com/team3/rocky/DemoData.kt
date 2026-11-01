@@ -124,6 +124,49 @@ fun displayName(ctx: Context, uri: Uri): String {
     return name.substringBeforeLast('.')
 }
 
+/** 파일 이름 그대로 (확장자 포함). 서버가 확장자로 음원 형식을 판단한다. */
+fun fileName(ctx: Context, uri: Uri): String {
+    var name: String? = null
+    ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+        val i = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+        if (i >= 0 && c.moveToFirst()) name = c.getString(i)
+    }
+    val n = name ?: uri.lastPathSegment?.substringAfterLast('/') ?: "song"
+    if ('.' in n) return n
+    // 이름에 확장자가 없으면 MIME 종류로 붙인다.
+    val ext = when (ctx.contentResolver.getType(uri)) {
+        "audio/mpeg" -> "mp3"; "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+        "audio/flac", "audio/x-flac" -> "flac"; "audio/mp4", "audio/x-m4a", "audio/aac" -> "m4a"
+        "audio/ogg" -> "ogg"; else -> "mp3"
+    }
+    return "$n.$ext"
+}
+
+/** 폰에 저장된 파일(서버 결과 또는 캐시에 꺼낸 데모 파일)을 공유. 받는 쪽에서 알아보게 곡 이름을 붙인다. */
+fun shareLocalFiles(ctx: Context, files: List<File>, title: String) {
+    if (files.isEmpty()) return
+    val dir = File(ctx.cacheDir, "share").apply { mkdirs() }
+    val prefix = title.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").take(40).trim('_')
+    val copies = files.map { f ->
+        if (f.parentFile == dir) f
+        else File(dir, if (prefix.isEmpty()) f.name else "${prefix}_${f.name}").also { f.copyTo(it, overwrite = true) }
+    }
+    val uris = ArrayList<Uri>(copies.map { FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", it) })
+    val intent = if (uris.size == 1) {
+        Intent(Intent.ACTION_SEND).apply {
+            type = mime(copies[0].name)
+            putExtra(Intent.EXTRA_STREAM, uris[0])
+        }
+    } else {
+        Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+            type = "*/*"
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+        }
+    }
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    ctx.startActivity(Intent.createChooser(intent, "ROCKY 악보 공유"))
+}
+
 private fun mime(name: String) = when (name.substringAfterLast('.').lowercase()) {
     "pdf" -> "application/pdf"
     "mid", "midi" -> "audio/midi"
