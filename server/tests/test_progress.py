@@ -56,3 +56,15 @@ def test_result_lists_pdf_and_midi_per_part(tmp_path):
     assert r["instruments"]["piano"]["midi"] == "scores/piano.mid"
     assert r["generated_parts"] == ["piano"]
     assert "manifest.json" not in allowed_paths(r)
+
+
+def test_arrange_counts_only_stages_this_song_runs(tmp_path):
+    from rocky_server.progress import arrange_steps
+    base = ["demucs", *[f"muscriptor_{s}" for s in STEMS], "merge_stems", "beat_this", "align"]
+    # no bass in the song, user asked for a bass: bass TAB runs on the generated part only
+    m = {"completed": base + ["guitar_tab", "midigpt", "normalize_generated"],
+         "original_parts": ["drums", "guitar"], "generated_targets": ["bass"]}
+    assert arrange_steps(m) == (3, 7)  # guitar_tab midigpt normalize combine gen_bass assemble + pdf
+    m["completed"] += ["combine_generated_strings", "generated_bass_tab", "assemble"]
+    m["score_publication"] = "complete"
+    assert arrange_steps(m) == (7, 7)

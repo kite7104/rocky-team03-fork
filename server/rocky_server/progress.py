@@ -76,13 +76,23 @@ def current_app_stage(completed: list[str]) -> str:
 
 
 def arrange_steps(manifest: dict) -> tuple[int, int]:
-    """Rough step count for ARRANGE: TAB, generation, assembly and PDF."""
-    completed = manifest.get("completed", [])
-    names = [n for n in completed if n not in PIPELINE_TO_APP]
-    total = 5  # guitar_tab, bass_tab, midigpt, normalize_generated, assemble
-    total += 2 * len([p for p in manifest.get("generated_targets", []) if p in ("guitar", "bass")])
-    total += 1  # PDF publication
-    done = len(names) + (1 if manifest.get("score_publication") == "complete" else 0)
+    """Steps of ARRANGE that this song will actually run (see unified.py), plus the PDF stage.
+
+    Guitar/bass TAB only run for parts present in the transcription; the
+    combine and generated-TAB stages only when MIDI-GPT makes a guitar or bass.
+    """
+    original = set(manifest.get("original_parts", []))
+    generated = set(manifest.get("generated_targets", []))
+    steps = [s for s, needed in (("guitar_tab", "guitar" in original), ("bass_tab", "bass" in original))
+             if needed]
+    steps += ["midigpt", "normalize_generated"]
+    if generated & {"guitar", "bass"}:
+        steps.append("combine_generated_strings")
+        steps += [f"generated_{p}_tab" for p in ("guitar", "bass") if p in generated]
+    steps.append("assemble")
+    done = sum(1 for s in steps if s in manifest.get("completed", []))
+    done += 1 if manifest.get("score_publication") == "complete" else 0
+    total = len(steps) + 1  # + PDF publication
     return min(done, total), total
 
 

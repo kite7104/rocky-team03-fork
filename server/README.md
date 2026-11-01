@@ -70,7 +70,7 @@ finished stages.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # 22 tests, no GPU or cluster needed
+pytest                                   # 23 tests, no GPU or cluster needed
 ROCKY_RUNNER=subprocess ROCKY_HOME=./local/app ROCKY_RUNS=./local/runs ROCKY_INPUTS=./local/input \
   ROCKY_MIDI_CMD="python /path/to/unified.py {audio} {run} --requested {requested} --resume --device cpu" \
   ROCKY_PDF_CMD="python /path/to/publish_scores.py {run}" \
