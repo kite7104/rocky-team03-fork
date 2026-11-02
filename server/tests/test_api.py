@@ -118,7 +118,8 @@ def test_restart_requeues_interrupted_jobs(setup):
     client, store, _, worker = setup()
     job_id = upload(client).json()["id"]
     store.update(store.get(job_id), state="running")
-    worker.thread.run = lambda: None  # start() without a live loop
+    for t in worker.threads:
+        t.run = lambda: None  # start() without a live loop
     worker.start()
     assert store.get(job_id).state == "queued"
 
@@ -132,3 +133,40 @@ def test_complete_job_frees_audio(setup):
     assert not (store.run_dir(job_id) / "stems").exists()
     assert list(store.inputs.iterdir()) == []
     assert client.get(f"/jobs/{job_id}/files/scores/full_band.pdf").status_code == 200
+
+
+def test_two_gpus_run_two_songs_at_once(tmp_path, monkeypatch):
+    """With ROCKY_PARALLEL=2, two uploads run at the same time; a third waits."""
+    import threading
+    monkeypatch.setenv("ROCKY_PARALLEL", "2")
+    monkeypatch.delenv("ROCKY_API_KEY", raising=False)
+    started, release = [], threading.Event()
+
+    class SlowRunner(FakeRunner):
+        def run_midi(self, job_id, audio, run, requested, log):
+            started.append(job_id)
+            release.wait(timeout=10)
+            super().run_midi(job_id, audio, run, requested, log)
+
+    store = JobStore(tmp_path / "app", tmp_path / "runs", tmp_path / "input")
+    with TestClient(create_app(store, SlowRunner())) as client:  # starts the workers
+        ids = [upload(client).json()["id"] for _ in range(3)]
+        for _ in range(100):
+            if len(started) == 2:
+                break
+            threading.Event().wait(0.05)
+        assert sorted(started) == sorted(ids[:2])
+        assert client.get(f"/jobs/{ids[2]}").json()["queue_position"] == 1
+        release.set()
+        for _ in range(100):
+            if all(store.get(i).state == "complete" for i in ids):
+                break
+            threading.Event().wait(0.05)
+        assert [store.get(i).state for i in ids] == ["complete"] * 3
+
+
+def test_claim_never_gives_one_job_to_two_workers(setup):
+    client, store, _, worker = setup()
+    upload(client)
+    assert worker.claim() is not None
+    assert worker.claim() is None

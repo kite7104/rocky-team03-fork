@@ -13,6 +13,7 @@ Settings (environment variables):
   ROCKY_INPUTS      where uploads are saved (default /data/input/app)
   ROCKY_API_KEY     if set, every request needs header X-Rocky-Key with this value
   ROCKY_MAX_UPLOAD_MB  upload size limit (default 60)
+  ROCKY_PARALLEL    songs processed at once = GPUs usable at once (default 1)
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ def create_app(store: JobStore | None = None, runner=None, start_worker: bool = 
                               Path(os.environ.get("ROCKY_RUNS", "/data/rocky-unified/runs")),
                               Path(os.environ.get("ROCKY_INPUTS", "/data/input/app")))
     runner = runner or make_runner(os.environ.get("ROCKY_RUNNER", "kubernetes"))
-    worker = Worker(store, runner)
+    worker = Worker(store, runner, int(os.environ.get("ROCKY_PARALLEL", "1")))
     api_key = os.environ.get("ROCKY_API_KEY", "")
     max_bytes = int(os.environ.get("ROCKY_MAX_UPLOAD_MB", "60")) * CHUNK
 
@@ -92,7 +93,7 @@ def create_app(store: JobStore | None = None, runner=None, start_worker: bool = 
             target.unlink(missing_ok=True)
             store.path(job.id).unlink(missing_ok=True)
             raise HTTPException(422, "empty file")
-        store.update(job, filename=target.name)
+        store.update(job, filename=target.name, state="queued")
         worker.notify()
         return {"id": job.id, "state": job.state}
 

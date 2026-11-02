@@ -37,6 +37,11 @@ spec:
       env:
         - name: ROCKY_RUNNER
           value: kubernetes
+        # Songs processed at once; each holds one GPU while it runs.
+        # The volume is ReadWriteOnce on one node, so every pipeline pod runs on
+        # that node: use 2 only if that node can give this workspace 2 GPUs.
+        - name: ROCKY_PARALLEL
+          value: "2"
         - name: ROCKY_API_KEY
           valueFrom:
             secretKeyRef:

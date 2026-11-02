@@ -17,7 +17,7 @@ from pathlib import Path
 
 from .runners import RunnerError, to_wav
 
-STATES = ("queued", "running", "publishing", "complete", "failed")
+STATES = ("uploading", "queued", "running", "publishing", "complete", "failed")
 
 
 @dataclass
@@ -65,7 +65,9 @@ class JobStore:
         return sorted((j for j in jobs if j), key=lambda j: j.created_at)
 
     def create(self, title: str, filename: str, requested: list[str]) -> Job:
-        job = Job(id=uuid.uuid4().hex[:12], title=title, filename=filename, requested=requested)
+        # "uploading" until the file is fully saved, so no worker picks it up early.
+        job = Job(id=uuid.uuid4().hex[:12], title=title, filename=filename, requested=requested,
+                  state="uploading")
         self.save(job)
         return job
 
@@ -78,37 +80,56 @@ class JobStore:
 
 
 class Worker:
-    """Runs queued jobs in creation order on a background thread."""
+    """Runs queued jobs in creation order, up to `parallel` at a time.
 
-    def __init__(self, store: JobStore, runner) -> None:
+    Each running job holds one GPU while its GPU Job runs, so `parallel`
+    should equal the number of GPUs the workspace can use at once
+    (ROCKY_PARALLEL, default 1).
+    """
+
+    def __init__(self, store: JobStore, runner, parallel: int = 1) -> None:
         self.store, self.runner = store, runner
-        self.wake = threading.Event()
-        self.thread = threading.Thread(target=self._loop, name="rocky-worker", daemon=True)
+        self.parallel = max(1, parallel)
+        self.cond = threading.Condition()
+        self.threads = [threading.Thread(target=self._loop, name=f"rocky-worker-{i}", daemon=True)
+                        for i in range(self.parallel)]
 
     def start(self) -> None:
         # Jobs cut off by a restart are run again; --resume skips finished stages.
         for job in self.store.all():
             if job.state in ("running", "publishing"):
                 self.store.update(job, state="queued")
-        self.thread.start()
-        self.wake.set()
+            elif job.state == "uploading":  # the upload was cut off by the restart
+                self.store.update(job, state="failed", error="upload interrupted")
+        for t in self.threads:
+            t.start()
+        self.notify()
 
     def notify(self) -> None:
-        self.wake.set()
+        with self.cond:
+            self.cond.notify_all()
 
     def queue_position(self, job_id: str) -> int | None:
         queued = [j.id for j in self.store.all() if j.state == "queued"]
         return queued.index(job_id) + 1 if job_id in queued else None
 
-    def _next(self) -> Job | None:
-        return next((j for j in self.store.all() if j.state == "queued"), None)
+    def claim(self) -> Job | None:
+        """Take the oldest queued job and mark it running, so no other thread takes it."""
+        with self.store.lock:
+            job = next((j for j in self.store.all() if j.state == "queued"), None)
+            if job is not None:
+                job.state = "running"
+                job.started_at = job.started_at or time.time()
+                job.error = None
+                self.store.save(job)
+            return job
 
     def _loop(self) -> None:
         while True:
-            job = self._next()
+            job = self.claim()
             if job is None:
-                self.wake.wait(timeout=30)
-                self.wake.clear()
+                with self.cond:
+                    self.cond.wait(timeout=30)
                 continue
             self.run(job)
 

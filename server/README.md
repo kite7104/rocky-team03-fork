@@ -10,8 +10,11 @@ app ──upload──▶ API pod (CPU, always on) ──creates──▶ GPU Jo
 ```
 
 The API pod has no GPU, so the 30-minute idle-GPU rule does not apply to it.
-The GPU is used only while a song's GPU Job runs. The workspace has one GPU,
-so songs run one at a time in upload order.
+A GPU is used only while a song's GPU Job runs. `ROCKY_PARALLEL` songs run at
+once (one GPU each); the rest wait in upload order. `k8s/api-pod.yaml` sets 2
+for a workspace with two GPUs. The `muscriptor-data` volume is ReadWriteOnce on
+one node, so both GPU Jobs must fit on that node; if the second Job stays
+`Pending`, set `ROCKY_PARALLEL` to 1.
 
 ## API
 
@@ -19,7 +22,7 @@ so songs run one at a time in upload order.
 | --- | --- | --- |
 | `GET` | `/health` | `{"ok": true}` |
 | `POST` | `/jobs` | multipart: `file` (wav/mp3/flac/m4a/ogg), `requested` (e.g. `piano,guitar`), `title` → `{"id", "state"}` |
-| `GET` | `/jobs/{id}` | `state` (`queued`, `running`, `publishing`, `complete`, `failed`), `queue_position`, `error`, and progress: `stage` (`SEPARATE`, `TRANSCRIBE`, `BEATS`, `ARRANGE`), `completed`, `total`, `fraction` (0–1), `eta_sec` |
+| `GET` | `/jobs/{id}` | `state` (`uploading`, `queued`, `running`, `publishing`, `complete`, `failed`), `queue_position`, `error`, and progress: `stage` (`SEPARATE`, `TRANSCRIBE`, `BEATS`, `ARRANGE`), `completed`, `total`, `fraction` (0–1), `eta_sec` |
 | `GET` | `/jobs/{id}/result` | `full_band` and `instruments.<part>` with `pdf`, `midi`, `pages`; `original_parts`, `generated_parts` |
 | `GET` | `/jobs/{id}/files/{path}` | one file listed in the result (nothing else on the volume) |
 
@@ -70,7 +73,7 @@ finished stages.
 
 ```bash
 pip install -r requirements-dev.txt
-pytest                                   # 23 tests, no GPU or cluster needed
+pytest                                   # 25 tests, no GPU or cluster needed
 ROCKY_RUNNER=subprocess ROCKY_HOME=./local/app ROCKY_RUNS=./local/runs ROCKY_INPUTS=./local/input \
   ROCKY_MIDI_CMD="python /path/to/unified.py {audio} {run} --requested {requested} --resume --device cpu" \
   ROCKY_PDF_CMD="python /path/to/publish_scores.py {run}" \
