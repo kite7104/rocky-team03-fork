@@ -1,9 +1,13 @@
-# 11/4 시연 — 재욱 노트북 (gpu05 · 폰 1)
+# 11/4 시연 — 재욱·채연 노트북 모두 gpu05
 
 ```
-폰1 ─USB─ 재욱 노트북 ─(port-forward)─ gpu05 워크스페이스의 rocky-api ─ GPU(ferrari)
-폰2 ─USB─ 채연 노트북 ─(port-forward)─ gpu22 워크스페이스의 rocky-api ─ GPU(ford)
+폰1 ─USB─ 재욱 노트북 ─(port-forward)─┐
+                                       ├─ gpu05 워크스페이스의 rocky-api ─ GPU 1개(ferrari)
+폰2 ─USB─ 채연 노트북 ─(port-forward)─┘
 ```
+- 두 노트북 모두 **같은 gpu05 계정, 같은 서버**에 붙는다 (gpu22는 데이터 복사가 오래 걸려 11/4 시연에서는 쓰지 않음)
+- GPU가 1개라 두 폰에서 곡을 동시에 올리면 **차례로** 처리된다 (뒤 곡은 "앞의 곡을 기다리는 중")
+- agent(탭 2)는 두 노트북 모두 켜 둬도 된다 — 요청은 한 쪽만 처리한다. 한 노트북이 꺼져도 다른 쪽이 이어받는다
 - 서버(rocky-api)는 gpu05에 **이미 올라가 있다** (11/3 채연이 올리고 끝까지 시험 완료). 노트북에서는 **연결만** 하면 된다
 - 앱 서버 주소는 기본값 `http://localhost:8000` 그대로
 - 시연 중 gpu05에 **다른 GPU Pod를 띄우지 말 것** (워크스페이스 GPU 1개 → 앱 곡이 기다림)
@@ -18,8 +22,8 @@
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"     # 맥, adb가 안 잡힐 때
 git clone -b feature/app-server-v2 https://github.com/kite7104/rocky-team03-fork rocky-app-server
 ```
-- 폰1: **USB 디버깅 켜기** (설정 → 휴대전화 정보 → 소프트웨어 정보 → 빌드번호 7번 → 개발자 옵션 → USB 디버깅), 맥에 꽂고 "항상 허용"
-- 폰1에 앱(team3_ROCKY.apk)과 음원(다운로드/band_songs 12곡)은 채연이 넣어 둠
+- 폰: **USB 디버깅 켜기** (설정 → 휴대전화 정보 → 소프트웨어 정보 → 빌드번호 7번 → 개발자 옵션 → USB 디버깅), 맥에 꽂고 "항상 허용"
+- 폰 두 대에 앱(team3_ROCKY.apk)과 음원(다운로드/band_songs 12곡)은 채연이 넣어 둠
 
 ## 1. 시연 직전 — 터미널 탭 3개
 
