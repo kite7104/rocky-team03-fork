@@ -22,7 +22,7 @@
 ### A-1. 프로그램 설치 (맥 터미널)
 ```bash
 brew --version          # 버전이 나오면 Homebrew 있음. 없으면 https://brew.sh 의 설치 한 줄을 먼저 실행
-brew install kubectl int128/kubelogin/kubelogin
+brew install kubectl kubelogin
 kubectl version --client
 kubectl oidc-login --version
 ```
@@ -34,7 +34,10 @@ adb version
   `adb: command not found` 이면 Android Studio → Settings → Languages & Frameworks → Android SDK → **SDK Tools** 탭 → **Android SDK Platform-Tools** 체크 → Apply
 
 ### A-2. kubeconfig 받기
-1. https://sgs.snucse.org 에 로그인 → 워크스페이스 페이지에서 **kubeconfig 다운로드**
+- 계정(gpu05, gpu22)은 팀 공용 계정이라 **여러 노트북에서 같은 계정으로 로그인해도 된다** (재욱 노트북과 채연 노트북 모두 gpu05 가능)
+- 노트북에서 **한 계정만** 쓸 거면 TA 안내대로 `~/.kube/config` 로 저장하고, 아래 명령의 `k5` 대신 그냥 `kubectl` 을 써도 된다
+1. 브라우저에서 https://id.snucse.org 에 개인 계정으로 로그인돼 있으면 **먼저 로그아웃** (다른 계정이 자동 로그인되는 걸 막음. 시크릿 창도 좋음)
+2. https://sgs.snucse.org 에 팀 계정으로 로그인 → 워크스페이스 페이지 아래쪽에서 **kubeconfig 다운로드**
 2. 파일 이름을 계정별로 바꿔서 `~/.kube/` 에 둔다
    - 워크스페이스 1 → `~/.kube/gpu05.yaml`
    - 워크스페이스 2 → `~/.kube/gpu22.yaml`
@@ -92,7 +95,7 @@ k22 get pvc,pod                 # muscriptor-data: Bound, rocky-files: Running
 k5 get pod rocky-files || k5 apply -f server/k8s/files-pod.yaml
 k5 exec rocky-files -- du -sh /data/model /data/bsrofo /data/pipeline /data/cache /data/rocky-unified
 ```
-복사 (노트북을 거쳐 그대로 흘려 보냄. 약 15 GB, 네트워크에 따라 10~40분. **노트북이 잠들지 않게**):
+복사 (워크스페이스 1 → 노트북 → 워크스페이스 2로 **흘려 보내기만 하고 노트북 디스크에는 저장하지 않는다** — 노트북 여유 공간은 필요 없음. 약 15 GB, 네트워크에 따라 10~40분. **노트북이 잠들지 않게**, 충전기 연결):
 ```bash
 export COPYFILE_DISABLE=1
 # 1) 작은 것부터
