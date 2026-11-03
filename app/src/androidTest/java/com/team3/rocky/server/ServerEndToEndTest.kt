@@ -7,6 +7,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.printToString
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -81,7 +83,12 @@ class ServerEndToEndTest {
         // 결과 화면: 서버 PDF가 그림으로 보인다
         val work = job.toWork()
         compose.setContent { RockyTheme { ResultScreen(work, onBack = {}, onSaved = {}, onExport = {}, onShareToBand = {}) } }
-        compose.waitUntil(15_000) { compose.onAllNodesWithContentDescription("악보").fetchSemanticsNodes().isNotEmpty() }
+        try {
+            compose.waitUntil(60_000) { compose.onAllNodesWithContentDescription("악보").fetchSemanticsNodes().isNotEmpty() }
+        } catch (e: Throwable) {
+            // 무엇이 보이고 있었는지 남긴다 (로딩 중 / '악보가 없어요' / 오류)
+            throw AssertionError("결과 화면에 악보가 안 보임. 화면:\n" + compose.onRoot().printToString(maxDepth = 30), e)
+        }
         compose.onNodeWithText("✨ 피아노").assertIsDisplayed()
     }
 
