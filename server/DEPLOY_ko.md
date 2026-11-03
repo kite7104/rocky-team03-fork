@@ -158,6 +158,18 @@ adb reverse tcp:8000 tcp:8000
 ```
 - 케이블이 빠지거나 폰을 재부팅하면 `adb reverse` 를 다시. port-forward 가 끊기면 터미널 1 을 다시 (로그인이 만료되면 브라우저가 다시 뜸)
 - 두 노트북이 같은 워크스페이스(gpu05)에 붙어 있으면 agent는 **한 노트북에서만** 켜도 되고, 둘 다 켜도 요청은 한 쪽만 처리한다
+- agent를 `k22` 계정으로 돌릴 때는 로그인 토큰 위치도 맞춰야 한다:
+  `env HOME=$HOME/.kube/home22 python3 server/agent/rocky_agent.py --kubeconfig ~/.kube/gpu22.yaml`
+
+### 노트북 한 대로 두 워크스페이스를 동시에 시험할 때 (포트를 나눔)
+```bash
+k5  port-forward pod/rocky-api 8000:8000                     # 워크스페이스 1 → 노트북 8000
+k22 port-forward pod/rocky-api 8001:8000                     # 워크스페이스 2 → 노트북 8001
+python3 server/agent/rocky_agent.py --api http://localhost:8000
+env HOME=$HOME/.kube/home22 python3 server/agent/rocky_agent.py --api http://localhost:8001 --kubeconfig ~/.kube/gpu22.yaml
+adb -s <폰1> reverse tcp:8000 tcp:8000                        # 폰1 → 워크스페이스 1
+adb -s <폰2> reverse tcp:8000 tcp:8001                        # 폰2 → 워크스페이스 2 (앱 주소는 그대로 localhost:8000)
+```
 - agent를 껐다 켜도 괜찮다: 돌던 GPU Pod는 끝까지 돌고, 다시 켠 agent가 이어서 결과를 확인한다
 
 ## E. 앱에서 확인
