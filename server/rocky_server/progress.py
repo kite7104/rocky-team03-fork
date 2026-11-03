@@ -15,9 +15,12 @@ WEIGHTS = {"SEPARATE": 0.10, "TRANSCRIBE": 0.75, "BEATS": 0.05, "ARRANGE": 0.10}
 
 TRANSCRIBE_STEMS = ("drums", "bass", "guitar", "piano")
 
+SEPARATION_STAGES = ("bs_roformer", "demucs")  # BS-RoFormer since contract 8; Demucs before
+
 # unified.py stage name -> app stage. Anything not listed (TAB, MIDI-GPT,
 # assembly, PDF publication) counts as ARRANGE.
 PIPELINE_TO_APP = {
+    "bs_roformer": "SEPARATE",
     "demucs": "SEPARATE",
     **{f"muscriptor_{s}": "TRANSCRIBE" for s in TRANSCRIBE_STEMS},
     "merge_stems": "BEATS",
@@ -47,11 +50,20 @@ def last_progress_line(path: Path) -> dict | None:
     return None
 
 
-def transcription_chunks(run: Path, completed_stages: list[str]) -> tuple[int, int]:
-    """(chunks done, chunks total) summed over the four transcribed stems."""
+def stems_to_transcribe(manifest: dict) -> tuple[str, ...]:
+    """unified.py transcribes only the declared original instruments (all four when unknown)."""
+    original = (manifest.get("config") or {}).get("original", "unknown")
+    if original == "unknown" or not isinstance(original, list):
+        return TRANSCRIBE_STEMS
+    stems = tuple(s for s in TRANSCRIBE_STEMS if s in original)
+    return stems or TRANSCRIBE_STEMS
+
+
+def transcription_chunks(run: Path, completed_stages: list[str], stems=TRANSCRIBE_STEMS) -> tuple[int, int]:
+    """(chunks done, chunks total) summed over the transcribed stems."""
     per_stem_total = 0
     done = 0
-    for stem in TRANSCRIBE_STEMS:
+    for stem in stems:
         line = last_progress_line(run / "stem_midi" / f"{stem}.progress.jsonl")
         if line:
             per_stem_total = max(per_stem_total, int(line.get("total") or 0))
@@ -59,16 +71,16 @@ def transcription_chunks(run: Path, completed_stages: list[str]) -> tuple[int, i
             done += int(line.get("total") or 0) if line else 0
         elif line:
             done += int(line.get("completed") or 0)
-    total = per_stem_total * len(TRANSCRIBE_STEMS)
+    total = per_stem_total * len(stems)
     return min(done, total), total
 
 
-def current_app_stage(completed: list[str]) -> str:
+def current_app_stage(completed: list[str], stems=TRANSCRIBE_STEMS) -> str:
     """The app stage of the first unfinished pipeline stage."""
     done = set(completed)
-    if "demucs" not in done:
+    if not done & set(SEPARATION_STAGES):
         return "SEPARATE"
-    if not all(f"muscriptor_{s}" in done for s in TRANSCRIBE_STEMS):
+    if not all(f"muscriptor_{s}" in done for s in stems):
         return "TRANSCRIBE"
     if not {"merge_stems", "beat_this", "align"} <= done:
         return "BEATS"
@@ -76,24 +88,18 @@ def current_app_stage(completed: list[str]) -> str:
 
 
 def arrange_steps(manifest: dict) -> tuple[int, int]:
-    """Steps of ARRANGE that this song will actually run (see unified.py), plus the PDF stage.
+    """Rough progress through ARRANGE: TAB, MIDI-GPT, assembly, then PDF/MP3 publication.
 
-    Guitar/bass TAB only run for parts present in the transcription; the
-    combine and generated-TAB stages only when MIDI-GPT makes a guitar or bass.
+    Which of these stages run depends on the song (guitar count, generated parts),
+    so the total is the finished ones plus what is surely still to come.
     """
-    original = set(manifest.get("original_parts", []))
-    generated = set(manifest.get("generated_targets", []))
-    steps = [s for s, needed in (("guitar_tab", "guitar" in original), ("bass_tab", "bass" in original))
-             if needed]
-    steps += ["midigpt", "normalize_generated"]
-    if generated & {"guitar", "bass"}:
-        steps.append("combine_generated_strings")
-        steps += [f"generated_{p}_tab" for p in ("guitar", "bass") if p in generated]
-    steps.append("assemble")
-    done = sum(1 for s in steps if s in manifest.get("completed", []))
-    done += 1 if manifest.get("score_publication") == "complete" else 0
-    total = len(steps) + 1  # + PDF publication
-    return min(done, total), total
+    completed = manifest.get("completed", [])
+    done = len([n for n in completed if n not in PIPELINE_TO_APP and n != "publish_outputs"])
+    published = manifest.get("score_publication") == "complete"
+    if published:
+        return done + 1, done + 1
+    remaining = 1 if "assemble" in completed else 3  # (assemble +) publication
+    return done, done + remaining
 
 
 def overall_fraction(stage: str, completed: int, total: int) -> float:
@@ -110,9 +116,10 @@ def run_progress(run: Path, elapsed_sec: float | None) -> dict:
     """Progress fields for GET /jobs/{id} while the pipeline is running."""
     manifest = read_json(run / "manifest.json") or {"completed": []}
     completed = manifest.get("completed", [])
-    stage = current_app_stage(completed)
+    stems = stems_to_transcribe(manifest)
+    stage = current_app_stage(completed, stems)
     if stage == "TRANSCRIBE":
-        done, total = transcription_chunks(run, completed)
+        done, total = transcription_chunks(run, completed, stems)
     elif stage == "ARRANGE":
         done, total = arrange_steps(manifest)
     else:
@@ -130,27 +137,39 @@ def run_progress(run: Path, elapsed_sec: float | None) -> dict:
 def result_files(run: Path) -> dict:
     """Downloadable files of a finished run, as paths relative to the run.
 
-    Reads scores/score_outputs.json (written by publish_scores.py). MIDI for
-    each part: piano/drums from scores/, guitar/bass from their TAB folders.
+    Reads scores/score_outputs.json written by publish_scores.py (version 3:
+    PDF and MP3 for the band and each part; version 1 had PDF only). Parts are
+    guitar, bass, piano, drums, plus guitar_1/guitar_2 when MIDI-GPT added a
+    second guitar. Each part's MIDI is scores/<part>.mid when present.
     """
     contract = read_json(run / "scores" / "score_outputs.json")
     if contract is None:
         raise FileNotFoundError("scores/score_outputs.json is missing")
     manifest = read_json(run / "manifest.json") or {}
-    midi_for = {"piano": "scores/piano.mid", "drums": "scores/drums.mid",
-                "guitar": "guitar/guitar.mid", "bass": "bass/bass.mid"}
+    audio = contract.get("audio") or {}
+    part_audio = audio.get("instruments") or {}
+    old_midi = {"guitar": "guitar/guitar.mid", "bass": "bass/bass.mid"}  # version 1 layout
+
+    def present(rel: str | None) -> str | None:
+        return rel if rel and (run / rel).is_file() else None
+
     parts = {}
     for part, info in contract.get("instruments", {}).items():
         entry = {"pdf": info["pdf"], "pages": info.get("pages")}
-        midi = midi_for.get(part)
-        if part == "guitar" and not (run / midi).is_file() and (run / "guitar/skyline_lead_rhythm.mid").is_file():
-            midi = "guitar/skyline_lead_rhythm.mid"
-        if midi and (run / midi).is_file():
+        midi = present(f"scores/{part}.mid") or present(old_midi.get(part))
+        if midi:
             entry["midi"] = midi
+        mp3 = present((part_audio.get(part) or {}).get("mp3"))
+        if mp3:
+            entry["mp3"] = mp3
         parts[part] = entry
+    full = {"pdf": contract["full_band"]["pdf"], "pages": contract["full_band"].get("pages"),
+            "midi": contract.get("full_score_midi", "full_score.mid")}
+    band_mp3 = present((audio.get("full_band") or {}).get("mp3"))
+    if band_mp3:
+        full["mp3"] = band_mp3
     return {
-        "full_band": {"pdf": contract["full_band"]["pdf"], "pages": contract["full_band"].get("pages"),
-                      "midi": contract.get("full_score_midi", "full_score.mid")},
+        "full_band": full,
         "instruments": parts,
         "original_parts": manifest.get("original_parts", []),
         "generated_parts": manifest.get("generated_targets", []),
@@ -158,9 +177,7 @@ def result_files(run: Path) -> dict:
 
 
 def allowed_paths(result: dict) -> set[str]:
-    paths = {result["full_band"]["pdf"], result["full_band"]["midi"]}
-    for entry in result["instruments"].values():
-        paths.add(entry["pdf"])
-        if "midi" in entry:
-            paths.add(entry["midi"])
+    paths = set()
+    for entry in [result["full_band"], *result["instruments"].values()]:
+        paths.update(entry[k] for k in ("pdf", "midi", "mp3") if entry.get(k))
     return paths

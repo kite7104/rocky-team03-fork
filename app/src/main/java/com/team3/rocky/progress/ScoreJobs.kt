@@ -132,8 +132,10 @@ object ScoreJobs {
                 val input = app.contentResolver.openInputStream(audio.uri)
                     ?: throw IOException("음원 파일을 열 수 없어요")
                 input.use {
+                    // lineup·original은 앱 이름 그대로(guitar2 = 기타 2대) 보내고,
+                    // 서버가 unified.py 형식(keyboard,bass,guitar1|guitar2,drums / unknown)으로 바꾼다.
                     server.upload(it, audio.fileName, job.title, requestedParts(job.lineup),
-                        original = requestedParts(job.original), lineup = job.lineup)
+                        original = job.original, lineup = job.lineup)
                 }
             }
         }
@@ -191,6 +193,7 @@ object ScoreJobs {
             401 -> "서버 키가 맞지 않아요. 음원 업로드 화면 아래 '서버 설정'에서 확인해 주세요."
             413 -> "음원 파일이 너무 커요. 더 짧은 곡이나 MP3로 올려 주세요."
             415 -> "MP3, WAV, FLAC, M4A 음원만 올릴 수 있어요."
+            422 -> "이 밴드 구성으로는 만들 수 없어요. 원곡에 기타가 없으면 기타는 1대까지만 새로 만들 수 있어요."
             404 -> "서버에서 작업을 찾을 수 없어요. 새로 만들어 주세요."
             else -> "서버가 요청을 처리하지 못했어요. (HTTP ${e.code})"
         }

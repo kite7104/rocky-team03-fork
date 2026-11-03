@@ -36,7 +36,7 @@ def test_upload_queue_run_and_download(setup):
     assert client.get(f"/jobs/{job_id}/result").status_code == 409
 
     worker.run(store.get(job_id))
-    assert runner.calls == [("midi", job_id, f"{job_id}.wav", ("piano", "guitar")), ("pdf", job_id)]
+    assert runner.calls == [("midi", job_id, f"{job_id}.wav", "keyboard,guitar1", "unknown"), ("pdf", job_id)]
     s = client.get(f"/jobs/{job_id}").json()
     assert (s["state"], s["fraction"]) == ("complete", 1.0)
 
@@ -46,7 +46,9 @@ def test_upload_queue_run_and_download(setup):
     f = client.get(f"/jobs/{job_id}/files/scores/full_band.pdf")
     assert f.status_code == 200 and f.content == b"%PDF-full"
     assert f.headers["content-type"] == "application/pdf"
-    assert client.get(f"/jobs/{job_id}/files/guitar/guitar.mid").status_code == 200
+    assert client.get(f"/jobs/{job_id}/files/scores/guitar.mid").status_code == 200
+    mp3 = client.get(f"/jobs/{job_id}/files/scores/band.mp3")
+    assert mp3.status_code == 200 and mp3.headers["content-type"] == "audio/mpeg"
 
 
 def test_only_listed_files_can_be_downloaded(setup):
@@ -95,10 +97,32 @@ def test_bad_uploads_are_rejected(setup, name, requested, code):
     assert store.all() == []
 
 
-def test_empty_requested_keeps_transcribed_lineup(setup):
+def test_empty_lineup_is_rejected(setup):
     client, store, *_ = setup()
-    job_id = upload(client, requested="").json()["id"]
-    assert store.get(job_id).requested == []
+    assert upload(client, requested="").status_code == 422
+    assert store.all() == []
+
+
+@pytest.mark.parametrize("lineup,original,pipe_orig,pipe_req", [
+    ("piano,drums,bass,guitar,guitar2", "", "unknown", "keyboard,bass,guitar2,drums"),
+    ("piano,guitar", "guitar,drums", "guitar1,drums", "keyboard,guitar1"),
+    ("guitar,guitar2", "guitar,guitar2,bass", "bass,guitar2", "guitar2"),
+])
+def test_pipeline_arguments_from_app_lineup(setup, lineup, original, pipe_orig, pipe_req):
+    client, store, runner, worker = setup()
+    r = client.post("/jobs", files={"file": ("s.wav", b"RIFF", "audio/wav")},
+                    data={"requested": "guitar", "lineup": lineup, "original": original, "title": "t"})
+    job = store.get(r.json()["id"])
+    assert (job.pipeline_original, job.pipeline_requested) == (pipe_orig, pipe_req)
+    worker.run(job)
+    assert runner.calls[0][3:] == (pipe_req, pipe_orig)
+
+
+def test_two_guitars_without_original_guitar_is_rejected(setup):
+    client, *_ = setup()
+    r = client.post("/jobs", files={"file": ("s.wav", b"RIFF", "audio/wav")},
+                    data={"requested": "guitar", "lineup": "guitar,guitar2", "original": "drums,bass"})
+    assert r.status_code == 422
 
 
 def test_api_key(setup):
@@ -143,10 +167,10 @@ def test_two_gpus_run_two_songs_at_once(tmp_path, monkeypatch):
     started, release = [], threading.Event()
 
     class SlowRunner(FakeRunner):
-        def run_midi(self, job_id, audio, run, requested, log, note=lambda _m: None):
+        def run_midi(self, job_id, audio, run, requested, log, note=lambda _m: None, original="unknown"):
             started.append(job_id)
             release.wait(timeout=10)
-            super().run_midi(job_id, audio, run, requested, log, note)
+            super().run_midi(job_id, audio, run, requested, log, note, original)
 
     store = JobStore(tmp_path / "app", tmp_path / "runs", tmp_path / "input")
     with TestClient(create_app(store, SlowRunner())) as client:  # starts the workers
@@ -179,6 +203,7 @@ def test_upload_records_original_and_lineup(setup):
                           "lineup": "piano,guitar,guitar2", "title": "t"})
     job = store.get(r.json()["id"])
     assert job.original == ["guitar", "drums"]          # unknown names dropped
+    assert job.pipeline_original == "guitar1,drums"
     assert job.lineup == ["piano", "guitar", "guitar2"]
     assert job.requested == ["piano", "guitar"]
 

@@ -25,15 +25,15 @@ data class JobStatus(
     fun toProgress() = JobProgress(stage, completed, total, etaSec, done = isDone)
 }
 
-/** 결과 파일 하나 묶음: PDF 악보와 MIDI. 경로는 서버의 작업 폴더 기준 상대 경로. */
-data class ScorePart(val pdf: String, val midi: String?, val pages: Int?)
+/** 결과 파일 하나 묶음: PDF 악보, MIDI, 재생용 MP3. 경로는 서버의 작업 폴더 기준 상대 경로. */
+data class ScorePart(val pdf: String, val midi: String?, val pages: Int?, val mp3: String? = null)
 
 /** GET /jobs/{id}/result 응답. */
 data class JobResult(
     val id: String,
     val title: String,
     val fullBand: ScorePart,
-    /** piano, guitar, bass, drums 중 결과에 있는 악기 */
+    /** piano, guitar, bass, drums (+ AI가 기타를 하나 더 만들면 guitar_1, guitar_2) 중 결과에 있는 것 */
     val instruments: Map<String, ScorePart>,
     val originalParts: List<String>,
     /** 원곡에 없어서 MIDI-GPT가 새로 만든 악기 → 결과 화면에 'AI 생성' 표시 */
@@ -71,7 +71,8 @@ object ApiJson {
 
     fun jobId(text: String): String = JSONObject(text).getString("id")
 
-    private fun part(o: JSONObject) = ScorePart(o.getString("pdf"), o.stringOrNull("midi"), o.intOrNull("pages"))
+    private fun part(o: JSONObject) =
+        ScorePart(o.getString("pdf"), o.stringOrNull("midi"), o.intOrNull("pages"), o.stringOrNull("mp3"))
 
     private fun JSONObject.intOrNull(key: String) = if (has(key) && !isNull(key)) getInt(key) else null
     private fun JSONObject.stringOrNull(key: String) = if (has(key) && !isNull(key)) getString(key) else null

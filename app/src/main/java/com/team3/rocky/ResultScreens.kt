@@ -91,6 +91,9 @@ fun ResultScreen(
     val ai = work.aiGenerated
     // 서버에서 만든 악보면 폰에 받아 둔 PDF·MIDI를, 아니면 데모 파일(assets/demo)을 쓴다.
     val local = remember(work.id) { ScoreStore.load(ctx, work.id) }
+    // 서버 결과는 기타 2를 따로 가질 수 있어서 파트 이름 그대로, 데모는 파일 이름(assetBase)으로.
+    fun baseOf(part: String?) = part?.let { if (local != null) it else Demo.assetBase(it) } ?: Demo.BAND
+    fun serverPart(base: String) = base.takeIf { it != Demo.BAND }
     // 밴드에서 열면 내 파트를 먼저 보여준다. 보컬처럼 악보가 없는 파트는 밴드 전체 악보를 보여준다.
     val bandPart = myPart?.takeIf { it in work.instruments }
     var selectedPart by remember { mutableStateOf(bandPart) }   // null = 전체
@@ -107,8 +110,8 @@ fun ResultScreen(
 
     /** 선택한 파트의 음원을 준비한다. 위치는 그대로 이어서 재생할 수 있게 [startAt]으로 옮긴다. */
     fun load(base: String, startAt: Int): Boolean {
-        // 서버 결과는 MIDI로 들려준다 (폰의 기본 MIDI 소리).
-        val path = if (local != null) local.midi(base.takeIf { it != Demo.BAND })?.absolutePath
+        // 서버 결과는 악보로 합성한 MP3(없으면 MIDI)를 들려준다.
+        val path = if (local != null) local.audio(serverPart(base))?.absolutePath
         else Assets.find(ctx, base, AUDIO_EXT)?.let { Assets.toCache(ctx, it).absolutePath }
         if (path == null) {
             Toast.makeText(ctx, "이 파트의 음원 파일이 없어요", Toast.LENGTH_SHORT).show()
@@ -131,7 +134,7 @@ fun ResultScreen(
         }
     }
 
-    val audioBase = selectedPart?.let(Demo::assetBase) ?: Demo.BAND
+    val audioBase = baseOf(selectedPart)
 
     fun togglePlay() {
         if (playing) { player.pause(); playing = false; return }
@@ -144,7 +147,7 @@ fun ResultScreen(
         selectedPart = part
         // 듣던 위치에서 새 파트로 이어서 재생한다.
         val wasPlaying = playing
-        val newBase = part?.let(Demo::assetBase) ?: Demo.BAND
+        val newBase = baseOf(part)
         if (loadedBase != null && loadedBase != newBase) {
             if (load(newBase, position) && wasPlaying) player.start() else playing = false
         }
@@ -159,14 +162,14 @@ fun ResultScreen(
     }
 
     // ----- 악보 -----
-    val scoreBase = selectedPart?.let(Demo::assetBase) ?: Demo.BAND
+    val scoreBase = baseOf(selectedPart)
     var pages by remember { mutableStateOf<List<androidx.compose.ui.graphics.ImageBitmap>?>(null) }
     val widthPx = with(LocalDensity.current) { LocalConfiguration.current.screenWidthDp.dp.roundToPx() }
     LaunchedEffect(scoreBase) {
         pages = null
         pages = withContext(Dispatchers.IO) {
             if (local != null) {
-                local.pdf(scoreBase.takeIf { it != Demo.BAND })
+                local.pdf(serverPart(scoreBase))
                     ?.let { runCatching { PdfPages.render(it, widthPx) }.getOrNull() }
                     .orEmpty().map { it.asImageBitmap() }
             } else Assets.pages(ctx, scoreBase).mapNotNull { n ->
@@ -446,17 +449,17 @@ private fun ExportRow(item: ExportItem, checked: MutableMap<String, Boolean>) {
 private fun serverBandItems(ctx: android.content.Context, local: LocalScore, title: String) = listOfNotNull(
     local.pdf(null)?.let { f -> ExportItem("band.pdf", "악보", "PDF") { ScoreStore.toShare(ctx, f, "${title}_밴드 전체.pdf") } },
     local.midi(null)?.let { f -> ExportItem("band.mid", "MIDI", "MID") { ScoreStore.toShare(ctx, f, "${title}_밴드 전체.mid") } },
+    local.mp3(null)?.let { f -> ExportItem("band.mp3", "음원", "MP3") { ScoreStore.toShare(ctx, f, "${title}_밴드 전체.mp3") } },
 )
 
 private fun serverPartItems(
     ctx: android.content.Context, local: LocalScore, work: Work, title: String,
 ): Map<String, List<ExportItem>> =
     work.instruments.associateWith { inst ->
-        // 기타 2대는 서버에서 기타 악보 하나(두 트랙)로 나온다.
-        val part = Demo.assetBase(inst)
         val name = Demo.label(inst, work.instruments)
         listOfNotNull(
-            local.pdf(part)?.let { f -> ExportItem("$inst.pdf", "악보", "PDF") { ScoreStore.toShare(ctx, f, "${title}_$name.pdf") } },
-            local.midi(part)?.let { f -> ExportItem("$inst.mid", "MIDI", "MID") { ScoreStore.toShare(ctx, f, "${title}_$name.mid") } },
+            local.pdf(inst)?.let { f -> ExportItem("$inst.pdf", "악보", "PDF") { ScoreStore.toShare(ctx, f, "${title}_$name.pdf") } },
+            local.midi(inst)?.let { f -> ExportItem("$inst.mid", "MIDI", "MID") { ScoreStore.toShare(ctx, f, "${title}_$name.mid") } },
+            local.mp3(inst)?.let { f -> ExportItem("$inst.mp3", "음원", "MP3") { ScoreStore.toShare(ctx, f, "${title}_$name.mp3") } },
         )
     }.filterValues { it.isNotEmpty() }

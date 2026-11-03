@@ -14,19 +14,29 @@ import java.io.File
  * 폴더가 없는 작업은 데모 결과(assets/demo)로 보여준다.
  */
 class LocalScore(val dir: File, val result: JobResult) {
-    /** part가 null이면 밴드 전체 */
-    fun pdf(part: String?): File? = file((if (part == null) result.fullBand else result.instruments[part])?.pdf)
+    /**
+     * 앱의 파트 이름(piano, drums, bass, guitar, guitar2) → 서버 결과의 키.
+     * AI가 두 번째 기타를 만든 곡은 guitar_1 / guitar_2가 따로 오고,
+     * 원곡에 기타 2대가 있으면 guitar 하나(TAB 두 줄)에 둘 다 들어 있다.
+     * null이면 밴드 전체.
+     */
+    fun key(part: String?): String? = when (part) {
+        null -> null
+        "guitar" -> if ("guitar_1" in result.instruments) "guitar_1" else "guitar"
+        "guitar2" -> if ("guitar_2" in result.instruments) "guitar_2" else "guitar"
+        else -> part
+    }
 
-    fun midi(part: String?): File? = file((if (part == null) result.fullBand else result.instruments[part])?.midi)
+    private fun entry(part: String?) = key(part).let { k -> if (k == null) result.fullBand else result.instruments[k] }
+
+    fun pdf(part: String?): File? = file(entry(part)?.pdf)
+    fun midi(part: String?): File? = file(entry(part)?.midi)
+    fun mp3(part: String?): File? = file(entry(part)?.mp3)
+
+    /** 재생할 파일: MP3가 있으면 MP3, 없으면 MIDI (둘 다 악보로 합성한 소리, 원곡 아님). */
+    fun audio(part: String?): File? = mp3(part) ?: midi(part)
 
     val generated: Set<String> get() = result.generatedParts.toSet()
-
-    /** 내보내기 목록: (파일, 이름표) */
-    fun exportFiles(kor: (String) -> String): List<Pair<File, String>> = buildList {
-        pdf(null)?.let { add(it to "밴드 전체 악보") }
-        midi(null)?.let { add(it to "밴드 전체 MIDI") }
-        result.instruments.keys.sorted().forEach { p -> pdf(p)?.let { add(it to "${kor(p)} 악보") } }
-    }
 
     private fun file(rel: String?): File? = rel?.let { File(dir, it) }?.takeIf { it.isFile }
 }
@@ -54,8 +64,9 @@ object ScoreStore {
         val result = server.result(jobId)
         val d = dir(ctx, workId).apply { mkdirs() }
         val paths = buildSet {
-            add(result.fullBand.pdf); result.fullBand.midi?.let(::add)
-            result.instruments.values.forEach { add(it.pdf); it.midi?.let(::add) }
+            for (p in listOf(result.fullBand) + result.instruments.values) {
+                add(p.pdf); p.midi?.let(::add); p.mp3?.let(::add)
+            }
         }
         for (path in paths) server.download(jobId, path, File(d, path))
         // result.json은 마지막에 써서, 이 파일이 있으면 받기가 끝난 것으로 본다.
@@ -65,7 +76,7 @@ object ScoreStore {
 
     private fun toJson(r: JobResult): String {
         fun part(p: ScorePart) = org.json.JSONObject().put("pdf", p.pdf).put("midi", p.midi ?: org.json.JSONObject.NULL)
-            .put("pages", p.pages ?: org.json.JSONObject.NULL)
+            .put("pages", p.pages ?: org.json.JSONObject.NULL).put("mp3", p.mp3 ?: org.json.JSONObject.NULL)
         val inst = org.json.JSONObject()
         r.instruments.forEach { (k, v) -> inst.put(k, part(v)) }
         return org.json.JSONObject()

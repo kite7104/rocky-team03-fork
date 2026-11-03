@@ -28,6 +28,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import FileResponse
 
 from .jobs import JobStore, Worker
+from .lineup import APP_PARTS, LineupError, pipeline_args
 from .progress import allowed_paths, result_files, run_progress
 from .runners import make_runner
 
@@ -74,15 +75,20 @@ def create_app(store: JobStore | None = None, runner=None, start_worker: bool = 
         parts = [p.strip() for p in requested.split(",") if p.strip()]
         if len(parts) != len(set(parts)) or any(p not in INSTRUMENTS for p in parts):
             raise HTTPException(422, f"requested must be distinct names from {','.join(INSTRUMENTS)}")
-        # original: the lineup the user heard in the song (empty = "I don't know");
-        # lineup: the app's own part names (guitar2, ...). Both are recorded only.
-        orig = [p.strip() for p in original.split(",") if p.strip() in INSTRUMENTS]
-        app_lineup = [p.strip() for p in lineup.split(",") if p.strip()][:10]
+        # lineup: our band in app part names (guitar2 = second guitar); falls back to `requested`.
+        # original: what the user heard in the song, same names; empty = "I don't know".
+        app_lineup = [p.strip() for p in lineup.split(",") if p.strip() in APP_PARTS] or parts
+        orig = [p.strip() for p in original.split(",") if p.strip() in APP_PARTS]
+        try:
+            pipe_original, pipe_requested = pipeline_args(app_lineup, orig)
+        except LineupError as exc:
+            raise HTTPException(422, str(exc)) from exc
         ext = Path(file.filename or "").suffix.lower()
         if ext not in AUDIO_EXT:
             raise HTTPException(415, f"audio must be one of {' '.join(AUDIO_EXT)}")
         job = store.create(title.strip()[:120] or Path(file.filename or "song").stem, "", parts,
-                           original=orig, lineup=app_lineup)
+                           original=orig, lineup=app_lineup,
+                           pipeline_original=pipe_original, pipeline_requested=pipe_requested)
         target = store.inputs / f"{job.id}{ext}"
         size = 0
         with target.open("wb") as out:
@@ -132,7 +138,7 @@ def create_app(store: JobStore | None = None, runner=None, start_worker: bool = 
         # Only files listed in the result can be downloaded (no other paths on the volume).
         if rel not in allowed_paths(result_files(run)):
             raise HTTPException(404, "not a result file")
-        media = "application/pdf" if rel.endswith(".pdf") else "audio/midi"
+        media = {"pdf": "application/pdf", "mp3": "audio/mpeg"}.get(rel.rsplit(".", 1)[-1], "audio/midi")
         return FileResponse(run / rel, media_type=media, filename=Path(rel).name)
 
     return app

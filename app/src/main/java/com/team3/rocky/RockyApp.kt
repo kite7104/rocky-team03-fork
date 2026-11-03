@@ -202,7 +202,11 @@ fun RockyApp() {
                     go(Screen.Original(title, audio))
                 },
             )
-            is Screen.Original -> LineupScreen(
+            is Screen.Original -> {
+              // 파이프라인 규칙: 원곡에 기타가 없으면 기타는 1대까지만 새로 만들 수 있다.
+              val twoGuitarsFromNone = !originalUnknown && original.isNotEmpty() &&
+                  Demo.guitarCount(original) == 0 && Demo.guitarCount(lineup) == 2
+              LineupScreen(
                 title = "원곡 구성",
                 heading = "원곡 밴드 구성을\n알려주세요",
                 sub = "원곡에서 들리는 악기를 골라주세요.\n우리 밴드에만 있는 악기는 AI가 새로 만들어요.",
@@ -211,12 +215,16 @@ fun RockyApp() {
                 onGuitars = { n -> original = Demo.setGuitarCount(original, n); originalUnknown = false },
                 onBack = { back() },
                 nextLabel = "악보 만들기 시작",
-                canNext = original.isNotEmpty() || originalUnknown,
+                canNext = (original.isNotEmpty() || originalUnknown) && !twoGuitarsFromNone,
                 unknown = originalUnknown,
                 onUnknown = { originalUnknown = !originalUnknown; if (originalUnknown) original = emptySet() },
                 footer = {
                     val ai = Demo.ordered(Demo.aiGenerated(Demo.ordered(lineup), Demo.ordered(original)))
                     when {
+                        twoGuitarsFromNone -> InfoNote(
+                            "원곡에 기타가 없으면 기타는 1대까지만 새로 만들 수 있어요. 우리 밴드 구성에서 기타를 1대로 줄여 주세요.",
+                            strong = true,
+                        )
                         originalUnknown -> InfoNote("ROCKY가 원곡을 듣고 어떤 악기가 있는지 알아서 판단해요. 원곡에 없는 파트는 AI가 새로 만들어요.")
                         original.isNotEmpty() -> InfoNote(
                             if (ai.isEmpty()) "원곡에 있는 파트만 악보로 옮겨요"
@@ -233,7 +241,8 @@ fun RockyApp() {
                     )
                     openTab(Tab.PROGRESS)
                 },
-            )
+              )
+            }
             is Screen.Result -> ResultScreen(
                 work = s.work,
                 myPart = s.myPart,

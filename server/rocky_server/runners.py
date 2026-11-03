@@ -45,25 +45,29 @@ class SubprocessRunner:
     def __init__(self) -> None:
         self.midi_cmd = os.environ.get(
             "ROCKY_MIDI_CMD",
-            "/data/rocky-unified/.venv/bin/python /data/pipeline/unified.py {audio} {run} --requested {requested} --resume")
+            "/data/rocky-unified/.venv/bin/python /data/pipeline/unified.py {audio} {run} "
+            "--original {original} --requested {requested} "
+            "--bsroformer-models-dir /data/bsrofo/models --bsroformer-lib-dir /data/bsrofo/pylib "
+            "--resume --no-publish")
         self.pdf_cmd = os.environ.get(
             "ROCKY_PDF_CMD",
             "/data/rocky-unified/.venv/bin/python /data/pipeline/publish_scores.py {run}")
 
-    def _run(self, template: str, audio: Path, run: Path, requested: list[str], log: Path) -> None:
+    def _run(self, template: str, audio: Path, run: Path, requested: str, log: Path,
+             original: str = "unknown") -> None:
         cmd = template.format(audio=shlex.quote(str(audio)), run=shlex.quote(str(run)),
-                              requested=shlex.quote(",".join(requested)))
+                              requested=shlex.quote(requested), original=shlex.quote(original))
         with log.open("a", encoding="utf-8") as out:
             code = subprocess.run(cmd, shell=True, stdout=out, stderr=subprocess.STDOUT).returncode
         if code:
             raise RunnerError(f"command exited {code}; see {log.name}")
 
-    def run_midi(self, job_id: str, audio: Path, run: Path, requested: list[str], log: Path,
-                 note=lambda _msg: None) -> None:
-        self._run(self.midi_cmd, audio, run, requested, log)
+    def run_midi(self, job_id: str, audio: Path, run: Path, requested: str, log: Path,
+                 note=lambda _msg: None, original: str = "unknown") -> None:
+        self._run(self.midi_cmd, audio, run, requested, log, original)
 
     def run_pdf(self, job_id: str, run: Path, log: Path, note=lambda _msg: None) -> None:
-        self._run(self.pdf_cmd, run, run, [], log)
+        self._run(self.pdf_cmd, run, run, "", log)
 
 
 class KubernetesRunner:
@@ -118,16 +122,20 @@ class KubernetesRunner:
                        metadata=c.V1ObjectMeta(name=name, labels={"app": "rocky", "rocky-stage": name.split("-")[1]}),
                        spec=spec)
 
-    def midi_pod(self, job_id: str, audio: Path, run: Path, requested: list[str]):
+    def midi_pod(self, job_id: str, audio: Path, run: Path, requested: str, original: str = "unknown"):
         script = (
             "set -euo pipefail; "
             "export HF_HOME=/data/cache/hf TORCH_HOME=/data/cache/torch "
             "UV_CACHE_DIR=/data/cache/uv UV_TOOL_DIR=/data/cache/uv-tools "
             "UV_PYTHON_INSTALL_DIR=/data/cache/python XDG_CACHE_HOME=/data/cache/xdg; "
             'exec /data/rocky-unified/.venv/bin/python /data/pipeline/unified.py '
-            '"$ROCKY_INPUT_AUDIO" "$ROCKY_OUTPUT_DIR" --requested "$ROCKY_REQUESTED" --resume')
+            '"$ROCKY_INPUT_AUDIO" "$ROCKY_OUTPUT_DIR" '
+            '--original "$ROCKY_ORIGINAL" --requested "$ROCKY_REQUESTED" '
+            '--bsroformer-models-dir /data/bsrofo/models --bsroformer-lib-dir /data/bsrofo/pylib '
+            '--resume --no-publish')
         env = {"ROCKY_INPUT_AUDIO": str(audio), "ROCKY_OUTPUT_DIR": str(run),
-               "ROCKY_REQUESTED": ",".join(requested), "NVIDIA_DRIVER_CAPABILITIES": "compute,utility"}
+               "ROCKY_ORIGINAL": original, "ROCKY_REQUESTED": requested,
+               "NVIDIA_DRIVER_CAPABILITIES": "compute,utility"}
         return self._pod(f"rocky-midi-{job_id}", self.pipeline_image, script, env,
                          {"cpu": "8", "memory": "32Gi", "nvidia.com/gpu": "1"})
 
@@ -137,8 +145,6 @@ class KubernetesRunner:
             "export DEBIAN_FRONTEND=noninteractive QT_QPA_PLATFORM=offscreen",
             "export XDG_RUNTIME_DIR=/tmp/rocky-qt-runtime",
             'mkdir -p "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"',
-            "sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "
-            "/etc/apt/sources.list.d/ubuntu.sources",
             "apt-get -o Acquire::Retries=5 update -qq",
             "apt-get -o Acquire::Retries=5 install -y -qq --no-install-recommends musescore3 poppler-utils",
             '/data/rocky-unified/.venv/bin/python /data/pipeline/publish_scores.py "$ROCKY_OUTPUT_DIR" '
@@ -213,9 +219,9 @@ class KubernetesRunner:
             with log.open("a", encoding="utf-8") as out:
                 out.write(f"(could not read log of {name}: {exc})\n")
 
-    def run_midi(self, job_id: str, audio: Path, run: Path, requested: list[str], log: Path,
-                 note=lambda _msg: None) -> None:
-        self._run_pod(self.midi_pod(job_id, audio, run, requested), log, note)
+    def run_midi(self, job_id: str, audio: Path, run: Path, requested: str, log: Path,
+                 note=lambda _msg: None, original: str = "unknown") -> None:
+        self._run_pod(self.midi_pod(job_id, audio, run, requested, original), log, note)
 
     def run_pdf(self, job_id: str, run: Path, log: Path, note=lambda _msg: None) -> None:
         self._run_pod(self.pdf_pod(job_id, run), log, note)

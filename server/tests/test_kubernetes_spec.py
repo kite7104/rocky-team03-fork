@@ -16,7 +16,7 @@ def runner():
 
 def test_midi_pod_matches_example_yaml():
     pod = runner().midi_pod("abc123abc123", Path("/data/input/app/x.wav"), Path("/data/rocky-unified/runs/x"),
-                            ["piano", "drums"])
+                            "keyboard,drums", "unknown")
     spec = pod.spec
     c = spec.containers[0]
     env = {e.name: e.value for e in c.env}
@@ -25,8 +25,9 @@ def test_midi_pod_matches_example_yaml():
     assert spec.node_selector == {"kubernetes.io/hostname": "ferrari"}
     assert c.resources.limits["nvidia.com/gpu"] == "1"
     assert c.resources.requests == {"cpu": "0", "memory": "0"}
-    assert env["ROCKY_REQUESTED"] == "piano,drums"
-    assert "/data/pipeline/unified.py" in c.args[0] and "--resume" in c.args[0]
+    assert env["ROCKY_REQUESTED"] == "keyboard,drums" and env["ROCKY_ORIGINAL"] == "unknown"
+    for part in ("/data/pipeline/unified.py", "--original", "--resume", "--no-publish", "--bsroformer-models-dir"):
+        assert part in c.args[0]
     assert spec.volumes[0].persistent_volume_claim.claim_name == "muscriptor-data"
 
 
@@ -80,7 +81,7 @@ def test_waits_for_gpu_quota_then_runs_and_deletes(tmp_path, monkeypatch):
     r = runner()
     r.core = FakeCore(quota_refusals=2)
     notes = []
-    r.run_midi("abc123abc123", Path("/a.wav"), tmp_path, ["piano"], tmp_path / "log", note=notes.append)
+    r.run_midi("abc123abc123", Path("/a.wav"), tmp_path, "keyboard", tmp_path / "log", note=notes.append)
     assert "GPU를 다른 작업이 쓰고 있어서 기다리는 중" in notes
     assert "GPU 차례를 기다리는 중" in notes
     assert notes[-1] is None
@@ -109,4 +110,4 @@ def test_other_refusals_fail_at_once(tmp_path, monkeypatch):
     core.create_namespaced_pod = refuse
     r.core = core
     with pytest.raises(RunnerError, match="cannot create"):
-        r.run_midi("abc123abc123", Path("/a.wav"), tmp_path, ["piano"], tmp_path / "log")
+        r.run_midi("abc123abc123", Path("/a.wav"), tmp_path, "keyboard", tmp_path / "log")

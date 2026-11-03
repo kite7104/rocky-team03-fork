@@ -49,15 +49,22 @@ def midi() -> bytes:
     return b"MThd" + struct.pack(">IHHH", 6, 0, 1, 480) + b"MTrk" + struct.pack(">I", len(ev)) + ev
 
 
+# one silent MPEG-1 Layer III frame (128 kbps, 44.1 kHz), repeated: enough for a player to open
+MP3 = (b"\xff\xfb\x90\x64" + b"\x00" * 413) * 40
+
+
 def manifest(run: Path, completed, status="running", **extra):
-    (run / "manifest.json").write_text(json.dumps({"completed": list(completed), "status": status, **extra}))
+    path = run / "manifest.json"
+    old = json.loads(path.read_text()) if path.exists() else {}
+    old.update({"completed": list(completed), "status": status, **extra})
+    path.write_text(json.dumps(old))
 
 
 def run_midi(run: Path) -> None:
     run.mkdir(parents=True, exist_ok=True)
-    manifest(run, [])
+    manifest(run, [], config={"original": "unknown", "pipeline_contract": 8})
     time.sleep(1)
-    done = ["demucs"]
+    done = ["bs_roformer"]
     manifest(run, done)
     (run / "stem_midi").mkdir(exist_ok=True)
     for stem in STEMS:
@@ -70,9 +77,6 @@ def run_midi(run: Path) -> None:
     done += ["merge_stems", "beat_this", "align", "guitar_tab", "bass_tab", "midigpt",
              "normalize_generated", "assemble"]
     (run / "full_score.mid").write_bytes(midi())
-    for p in ("guitar", "bass"):
-        (run / p).mkdir(exist_ok=True)
-        (run / p / f"{p}.mid").write_bytes(midi())
     manifest(run, done, status="complete", original_parts=sorted(PARTS),
              generated_targets=list(GENERATED), score_publication="pending")
 
@@ -81,16 +85,19 @@ def run_pdf(run: Path) -> None:
     scores = run / "scores"
     scores.mkdir(exist_ok=True)
     time.sleep(1)
-    instruments = {}
+    instruments, audio = {}, {}
     for p in (*PARTS, *GENERATED):
         (scores / f"{p}.pdf").write_bytes(pdf(f"ROCKY {p}"))
-        if p in ("piano", "drums"):
-            (scores / f"{p}.mid").write_bytes(midi())
+        (scores / f"{p}.mid").write_bytes(midi())
+        (scores / f"{p}.mp3").write_bytes(MP3)
         instruments[p] = {"pdf": f"scores/{p}.pdf", "pages": 1}
+        audio[p] = {"mp3": f"scores/{p}.mp3"}
     (scores / "full_band.pdf").write_bytes(pdf("ROCKY full band"))
+    (scores / "band.mp3").write_bytes(MP3)
     (scores / "score_outputs.json").write_text(json.dumps({
-        "version": 1, "full_score_midi": "full_score.mid",
-        "full_band": {"pdf": "scores/full_band.pdf", "pages": 1}, "instruments": instruments}))
+        "version": 3, "full_score_midi": "full_score.mid",
+        "full_band": {"pdf": "scores/full_band.pdf", "pages": 1}, "instruments": instruments,
+        "audio": {"full_band": {"mp3": "scores/band.mp3"}, "instruments": audio}}))
     m = json.loads((run / "manifest.json").read_text())
     m["score_publication"] = "complete"
     (run / "manifest.json").write_text(json.dumps(m))

@@ -36,6 +36,9 @@ class Job:
     lineup: list[str] = field(default_factory=list)
     # a short message for the app while the song waits, e.g. for the GPU
     note: str | None = None
+    # unified.py --original / --requested (keyboard,bass,guitar1|guitar2,drums; original may be "unknown")
+    pipeline_original: str = "unknown"
+    pipeline_requested: str = ""
 
 
 class JobStore:
@@ -70,10 +73,13 @@ class JobStore:
         return sorted((j for j in jobs if j), key=lambda j: j.created_at)
 
     def create(self, title: str, filename: str, requested: list[str],
-               original: list[str] | None = None, lineup: list[str] | None = None) -> Job:
+               original: list[str] | None = None, lineup: list[str] | None = None,
+               pipeline_original: str = "unknown", pipeline_requested: str = "") -> Job:
         # "uploading" until the file is fully saved, so no worker picks it up early.
         job = Job(id=uuid.uuid4().hex[:12], title=title, filename=filename, requested=requested,
-                  state="uploading", original=original or [], lineup=lineup or [])
+                  state="uploading", original=original or [], lineup=lineup or [],
+                  pipeline_original=pipeline_original,
+                  pipeline_requested=pipeline_requested or ",".join(requested))
         self.save(job)
         return job
 
@@ -151,7 +157,8 @@ class Worker:
                     store.update(job, note=msg)
 
             if not (run / "full_score.mid").is_file():
-                self.runner.run_midi(job.id, audio, run, job.requested, log, note=note)
+                self.runner.run_midi(job.id, audio, run, job.pipeline_requested, log, note=note,
+                                     original=job.pipeline_original)
             store.update(job, state="publishing", note=None)
             if not (run / "scores" / "score_outputs.json").is_file():
                 self.runner.run_pdf(job.id, run, log, note=note)

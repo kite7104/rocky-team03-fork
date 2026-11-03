@@ -26,7 +26,7 @@ def test_no_manifest_yet_is_separation_without_eta(tmp_path):
 
 
 def test_transcription_counts_chunks_of_all_four_stems(tmp_path):
-    write_manifest(tmp_path, ["demucs", "muscriptor_drums"])
+    write_manifest(tmp_path, ["bs_roformer", "muscriptor_drums"])
     write_progress(tmp_path, "drums", 30, 30)
     write_progress(tmp_path, "bass", 15, 30)
     p = run_progress(tmp_path, elapsed_sec=100)
@@ -36,7 +36,7 @@ def test_transcription_counts_chunks_of_all_four_stems(tmp_path):
 
 
 def test_half_written_progress_line_is_ignored(tmp_path):
-    write_manifest(tmp_path, ["demucs"])
+    write_manifest(tmp_path, ["bs_roformer"])
     write_progress(tmp_path, "drums", 3, 30)
     with (tmp_path / "stem_midi" / "drums.progress.jsonl").open("a") as f:
         f.write('{"stage": "transc')
@@ -44,27 +44,50 @@ def test_half_written_progress_line_is_ignored(tmp_path):
 
 
 def test_eta_waits_for_first_chunk(tmp_path):
-    write_manifest(tmp_path, ["demucs"])
+    write_manifest(tmp_path, ["bs_roformer"])
     assert run_progress(tmp_path, elapsed_sec=40)["eta_sec"] is None
 
 
 def test_result_lists_pdf_and_midi_per_part(tmp_path):
     write_outputs(tmp_path)
     r = result_files(tmp_path)
-    assert r["full_band"] == {"pdf": "scores/full_band.pdf", "pages": 5, "midi": "full_score.mid"}
-    assert r["instruments"]["guitar"] == {"pdf": "scores/guitar.pdf", "pages": 2, "midi": "guitar/guitar.mid"}
+    assert {k: r["full_band"][k] for k in ("pdf", "pages", "midi")} == \
+        {"pdf": "scores/full_band.pdf", "pages": 5, "midi": "full_score.mid"}
+    assert r["instruments"]["guitar"] == {"pdf": "scores/guitar.pdf", "pages": 2,
+                                          "midi": "scores/guitar.mid", "mp3": "scores/guitar.mp3"}
+    assert r["full_band"]["mp3"] == "scores/band.mp3"
     assert r["instruments"]["piano"]["midi"] == "scores/piano.mid"
     assert r["generated_parts"] == ["piano"]
     assert "manifest.json" not in allowed_paths(r)
 
 
-def test_arrange_counts_only_stages_this_song_runs(tmp_path):
+def test_arrange_progress_moves_forward_and_ends_at_100(tmp_path):
     from rocky_server.progress import arrange_steps
-    base = ["demucs", *[f"muscriptor_{s}" for s in STEMS], "merge_stems", "beat_this", "align"]
-    # no bass in the song, user asked for a bass: bass TAB runs on the generated part only
-    m = {"completed": base + ["guitar_tab", "midigpt", "normalize_generated"],
-         "original_parts": ["drums", "guitar"], "generated_targets": ["bass"]}
-    assert arrange_steps(m) == (3, 7)  # guitar_tab midigpt normalize combine gen_bass assemble + pdf
-    m["completed"] += ["combine_generated_strings", "generated_bass_tab", "assemble"]
-    m["score_publication"] = "complete"
-    assert arrange_steps(m) == (7, 7)
+    base = ["bs_roformer", *[f"muscriptor_{s}" for s in STEMS], "merge_stems", "beat_this", "align"]
+    seen = []
+    for extra in ([], ["guitar_tab"], ["guitar_tab", "bass_tab", "midigpt", "normalize_generated"],
+                  ["guitar_tab", "bass_tab", "midigpt", "normalize_generated", "assemble"]):
+        d, t = arrange_steps({"completed": base + extra})
+        seen.append(d / t)
+    assert seen == sorted(seen) and seen[-1] < 1
+    d, t = arrange_steps({"completed": base + ["assemble", "publish_outputs"], "score_publication": "complete"})
+    assert d == t
+
+
+def test_only_declared_original_stems_are_waited_for(tmp_path):
+    # original = guitar,drums: unified.py transcribes only those two stems
+    write_manifest(tmp_path, ["bs_roformer", "muscriptor_drums", "muscriptor_guitar"],
+                   config={"original": ["drums", "guitar"]})
+    assert run_progress(tmp_path, 10)["stage"] == "BEATS"
+
+
+def test_contract_8_separation_stage_name(tmp_path):
+    write_manifest(tmp_path, ["bs_roformer"])
+    assert run_progress(tmp_path, 10)["stage"] == "TRANSCRIBE"
+
+
+def test_extra_guitar_parts_are_listed(tmp_path):
+    write_outputs(tmp_path, extra_guitar=True)
+    r = result_files(tmp_path)
+    assert {"guitar_1", "guitar_2"} <= set(r["instruments"])
+    assert r["instruments"]["guitar_2"]["mp3"] == "scores/guitar_2.mp3"

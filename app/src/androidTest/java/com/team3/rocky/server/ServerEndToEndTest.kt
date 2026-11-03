@@ -74,6 +74,8 @@ class ServerEndToEndTest {
         assertEquals(setOf("piano"), job.toWork().aiGenerated)
         assertNotNull(local!!.pdf(null))
         assertNotNull(local.midi("guitar"))
+        assertNotNull(local.audio(null))            // 밴드 전체 MP3
+        assertEquals(local.pdf("guitar"), local.pdf("guitar2"))  // 원곡 기타 2대 → 기타 악보 하나
         assertTrue(PdfPages.render(local.pdf(null)!!, 600).isNotEmpty())
 
         // 결과 화면: 서버 PDF가 그림으로 보인다
@@ -93,6 +95,7 @@ class ServerEndToEndTest {
         val work = job.toWork()
         compose.setContent { RockyTheme { ExportScreen(work, onBack = {}) } }
         assertTrue(compose.onAllNodesWithText("MIDI").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(compose.onAllNodesWithText("음원").fetchSemanticsNodes().isNotEmpty())
         compose.onNodeWithText("1개 파일 보내기").assertIsDisplayed()
     }
 
