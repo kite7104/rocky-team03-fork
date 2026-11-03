@@ -1,0 +1,29 @@
+# CPU-only transfer pod for the second workspace. Pinned to ford: the hostpath volume
+# stays on the node of the first pod that uses it, so every pod there must use ford.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rocky-files
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: ford
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 1
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: muscriptor-data
+  containers:
+    - name: app
+      image: debian:bookworm
+      command: ['/bin/bash', '-c', 'sleep inf']
+      resources:
+        requests:
+          cpu: "0"
+          memory: "0"
+        limits:
+          cpu: "2"
+          memory: 4Gi
+      volumeMounts:
+        - name: data
+          mountPath: /data

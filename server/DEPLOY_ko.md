@@ -1,82 +1,165 @@
 # ROCKY 서버 SGS 배포·시연 안내 (처음 하는 사람용)
 
-앱(APK) → 노트북 → SGS 서버(rocky-api) → GPU Pod(unified.py) → CPU Pod(PDF·MP3) → 앱에 결과.
-서버 주소는 앱 기본값 `http://localhost:8000` 을 쓴다 (폰을 노트북에 USB로 연결 + `adb reverse`).
+```
+폰1 ─USB─ 노트북1(재욱, 계정 gpu05) ─port-forward─ 워크스페이스 1의 rocky-api ─ GPU(ferrari)
+폰2 ─USB─ 노트북2(채연, 계정 gpu22) ─port-forward─ 워크스페이스 2의 rocky-api ─ GPU(ford)
+```
+- 워크스페이스마다 GPU가 1개라서, 폰마다 다른 워크스페이스에 붙이면 두 곡이 동시에 만들어진다
+- 앱의 서버 주소는 두 폰 모두 기본값 `http://localhost:8000` 그대로 (각 폰이 자기 노트북의 8000번으로 감)
+- 워크스페이스 2가 준비되지 않으면 두 폰 모두 워크스페이스 1에 붙여도 된다 (곡은 한 번에 1개씩 차례로)
 
-## 0. 준비물 (노트북 한 대에 한 번만)
-| 필요한 것 | 확인 명령 | 없으면 |
+| | 워크스페이스 1 | 워크스페이스 2 |
 |---|---|---|
-| kubectl, kubelogin | `kubectl version --client` | SGS 매뉴얼(https://sgs-docs.snucse.org)대로 설치 |
-| SGS 로그인 (팀 워크스페이스, 계정 gpu05) | `kubectl auth whoami` | https://sgs.snucse.org 워크스페이스 페이지에서 kubeconfig 받아 `~/.kube/config` 로 저장 |
-| adb | `adb version` | 아래 한 줄 실행 (Android Studio에 들어 있음) |
+| 계정 | gpu05 | gpu22 |
+| 이름 | ws-qt1ja5byz6220 | ws-xkblzn1w9n5c2 |
+| 상태 | 모델·환경 설치 완료 (볼륨 `muscriptor-data`, ferrari) | 비어 있음 → **B단계에서 볼륨 만들고 1의 데이터를 복사** |
+| 이 안내의 매니페스트 | `server/k8s/*.yaml` | `server/k8s/ws2/*.yaml` (ford) |
 
+---
+
+## A. 노트북 준비 (두 노트북 모두, 한 번만)
+
+### A-1. 프로그램 설치 (맥 터미널)
 ```bash
-export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"   # 터미널을 새로 열 때마다 (또는 ~/.zshrc 에 추가)
+brew --version          # 버전이 나오면 Homebrew 있음. 없으면 https://brew.sh 의 설치 한 줄을 먼저 실행
+brew install kubectl int128/kubelogin/kubelogin
+kubectl version --client
+kubectl oidc-login --version
 ```
-- 계정을 바꿀 때 토큰이 섞이면 `Forbidden` 이 난다 → `rm -rf ~/.kube/cache/oidc-login` 후 다시 로그인
-
-## 1. 코드 받기
+- adb (Android Studio에 들어 있음). 터미널을 열 때마다 쓰기 귀찮으면 `~/.zshrc` 맨 아래에 이 줄을 추가
 ```bash
+export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"
+adb version
+```
+  `adb: command not found` 이면 Android Studio → Settings → Languages & Frameworks → Android SDK → **SDK Tools** 탭 → **Android SDK Platform-Tools** 체크 → Apply
+
+### A-2. kubeconfig 받기
+1. https://sgs.snucse.org 에 로그인 → 워크스페이스 페이지에서 **kubeconfig 다운로드**
+2. 파일 이름을 계정별로 바꿔서 `~/.kube/` 에 둔다
+   - 워크스페이스 1 → `~/.kube/gpu05.yaml`
+   - 워크스페이스 2 → `~/.kube/gpu22.yaml`
+```bash
+mkdir -p ~/.kube
+mv ~/Downloads/<받은 파일> ~/.kube/gpu22.yaml     # 파일 이름은 실제 받은 이름으로
+```
+
+### A-3. 두 계정을 섞이지 않게 쓰는 단축 명령
+두 계정은 로그인 토큰 저장 위치(`~/.kube/cache/oidc-login`)가 같아서 섞이면 `Forbidden` 이 난다.
+아래처럼 계정마다 저장 위치를 나눈 단축 명령 `k5`, `k22` 를 만든다 (`~/.zshrc` 에 추가하면 계속 쓸 수 있음).
+```bash
+mkdir -p ~/.kube/home22
+alias k5='kubectl --kubeconfig $HOME/.kube/gpu05.yaml'
+alias k22='env HOME=$HOME/.kube/home22 kubectl --kubeconfig $HOME/.kube/gpu22.yaml'
+```
+로그인 확인 (브라우저가 열리면 해당 계정으로 로그인. **다른 계정이 자동 로그인되면 시크릿 창**에서):
+```bash
+k5 auth whoami          # 워크스페이스 1 계정
+k22 auth whoami         # 워크스페이스 2 계정
+```
+- 노트북에 한 계정만 쓰면 그 단축 명령 하나만 만들어도 된다
+- 그래도 Forbidden 이고 오류에 다른 계정 `User "id:..."` 가 보이면: `rm -rf ~/.kube/cache/oidc-login ~/.kube/home22/.kube/cache/oidc-login` 후 다시 로그인
+
+### A-4. 권한 확인
+```bash
+k5 auth can-i create pods ; k5 auth can-i create roles ; k5 auth can-i create rolebindings
+```
+- 셋 다 `yes` 면 계속. `no` 가 있으면 채연 Claude에게 결과를 그대로 전달 (서버를 노트북에서 돌리는 방식으로 바꿈)
+
+### A-5. 코드 받기
+```bash
+cd ~
 git clone -b feature/app-server-v2 https://github.com/kite7104/rocky-team03-fork rocky-app-server
-cd rocky-app-server
+cd ~/rocky-app-server
+```
+(이미 받았다면 `cd ~/rocky-app-server && git pull`)
+
+---
+
+## B. 워크스페이스 2 준비 (오늘 한 번, 노트북 하나에서 — 두 계정 모두 로그인된 노트북)
+
+### B-1. 볼륨과 파일 Pod 만들기
+```bash
+cd ~/rocky-app-server
+k22 apply -f server/k8s/ws2/volume.yaml
+k22 apply -f server/k8s/ws2/files-pod.yaml
+k22 wait --for=condition=Ready pod/rocky-files --timeout=300s
+k22 get pvc,pod                 # muscriptor-data: Bound, rocky-files: Running
 ```
 
-## 2. 권한 확인
+### B-2. 워크스페이스 1의 모델·환경을 2로 복사
+먼저 크기 확인 (워크스페이스 1에 rocky-files 가 없으면 `k5 apply -f server/k8s/files-pod.yaml`):
 ```bash
-kubectl auth can-i create pods
-kubectl auth can-i create roles
-kubectl auth can-i create rolebindings
+k5 get pod rocky-files || k5 apply -f server/k8s/files-pod.yaml
+k5 exec rocky-files -- du -sh /data/model /data/bsrofo /data/pipeline /data/cache /data/rocky-unified
 ```
-- 셋 다 `yes` → 3번으로
-- `roles`/`rolebindings` 가 `no` → 서버 Pod가 GPU Pod를 만들 권한을 줄 수 없음. 담당자(채연)에게 알려서 "노트북에서 서버 실행" 방식으로 바꾼다
-
-## 3. 서버 올리기 (한 번만, 코드가 바뀌면 다시)
+복사 (노트북을 거쳐 그대로 흘려 보냄. 약 15 GB, 네트워크에 따라 10~40분. **노트북이 잠들지 않게**):
 ```bash
-# 파일 옮기는 Pod가 없으면 띄우기 (이미 있으면 AlreadyExists, 괜찮음)
-kubectl get pod rocky-files || kubectl apply -f server/k8s/files-pod.yaml
-kubectl wait --for=condition=Ready pod/rocky-files --timeout=120s
-
-# 서버 코드를 볼륨(/data/server)으로 복사
 export COPYFILE_DISABLE=1
-tar -C server -cf - rocky_server requirements.txt | kubectl exec -i rocky-files -- bash -c 'mkdir -p /data/server && tar -C /data/server -xf -'
-
-# 파이프라인이 최신(BS-RoFormer)인지 확인: 1 이상이면 OK
-kubectl exec rocky-files -- grep -c bsroformer /data/pipeline/unified.py
-
-# 권한 + 서버 Pod
-kubectl apply -f server/k8s/rbac.yaml
-kubectl apply -f server/k8s/api-pod.yaml
-kubectl logs -f rocky-api      # "Uvicorn running on http://0.0.0.0:8000" 이 보이면 Ctrl+C
+# 1) 작은 것부터
+k5 exec rocky-files -- tar -C /data -cf - model bsrofo pipeline | k22 exec -i rocky-files -- tar -C /data -xf -
+# 2) 패키지 캐시 + 실행 환경 (서로 연결된 파일이 있어서 한 번에)
+k5 exec rocky-files -- tar -C /data -cf - --exclude=rocky-unified/runs --exclude=rocky-unified/app cache rocky-unified \
+  | k22 exec -i rocky-files -- tar -C /data -xf -
+# 3) 확인: 두 워크스페이스 크기가 비슷해야 함
+k22 exec rocky-files -- du -sh /data/model /data/bsrofo /data/pipeline /data/cache /data/rocky-unified
+k22 exec rocky-files -- ls /data/rocky-unified/.venv/bin/python /data/model/model.safetensors
 ```
-- 코드를 다시 올릴 때: 위 `tar` 줄 → `kubectl delete pod rocky-api` → `kubectl apply -f server/k8s/api-pod.yaml`
+- 중간에 끊기면 그 줄만 다시 실행 (덮어쓰기라 괜찮음)
 
-## 4. 폰 연결 (시연 때마다)
-터미널 1 (켜 둔다):
+---
+
+## C. 서버 올리기 (워크스페이스마다)
+
+워크스페이스 1은 `k5` 와 `server/k8s/`, 워크스페이스 2는 `k22` 와 `server/k8s/ws2/` 를 쓴다.
+아래는 워크스페이스 1 예시. **2는 `k5`→`k22`, `server/k8s/api-pod.yaml`→`server/k8s/ws2/api-pod.yaml` 로 바꿔서 똑같이.**
 ```bash
-kubectl port-forward pod/rocky-api 8000:8000
+cd ~/rocky-app-server
+export COPYFILE_DISABLE=1
+
+# 1) 서버 코드를 볼륨(/data/server)으로
+tar -C server -cf - rocky_server requirements.txt | k5 exec -i rocky-files -- bash -c 'mkdir -p /data/server && tar -C /data/server -xf -'
+
+# 2) 파이프라인이 최신(BS-RoFormer)인지: 1 이상이면 OK
+k5 exec rocky-files -- grep -c bsroformer /data/pipeline/unified.py
+
+# 3) 권한 + 서버 Pod
+k5 apply -f server/k8s/rbac.yaml
+k5 apply -f server/k8s/api-pod.yaml
+k5 logs -f rocky-api        # 1~2분 뒤 "Uvicorn running on http://0.0.0.0:8000" 가 보이면 Ctrl+C
+```
+- 서버 코드를 다시 올릴 때: 1) 실행 → `k5 delete pod rocky-api` → `k5 apply -f server/k8s/api-pod.yaml`
+
+---
+
+## D. 폰 연결 (시연할 때마다, 각 노트북에서)
+
+터미널 1 (켜 둔다, 노트북1은 `k5`, 노트북2는 `k22`):
+```bash
+k5 port-forward pod/rocky-api 8000:8000
 ```
 터미널 2:
 ```bash
-curl localhost:8000/health          # {"ok":true}
-adb devices                         # 폰이 device 로 보여야 함 (폰에서 USB 디버깅 허용)
-adb reverse tcp:8000 tcp:8000       # 폰 두 대면: adb -s <기기번호> reverse tcp:8000 tcp:8000 를 각각
+curl localhost:8000/health        # {"ok":true}
+adb devices                       # 폰이 "device" 로 보여야 함 (폰에서 USB 디버깅 허용)
+adb reverse tcp:8000 tcp:8000
 ```
-- 폰 두 대를 노트북 한 대에 꽂아도 된다 (`adb devices` 에 두 줄)
-- 케이블이 빠지거나 폰을 재부팅하면 `adb reverse` 를 다시. port-forward 가 끊기면 터미널 1 을 다시
+- 케이블이 빠지거나 폰을 재부팅하면 `adb reverse` 를 다시. port-forward 가 끊기면 터미널 1 을 다시 (로그인이 만료되면 브라우저가 다시 뜸)
 
-## 5. 앱에서 확인
+## E. 앱에서 확인
 1. 새 악보 → 우리 밴드 구성 → 음원 업로드 화면 맨 아래 **서버 설정: http://localhost:8000** → **연결 확인** → `연결됨 ✓`
-2. 짧은 곡(30초~1분)을 골라 → 원곡 구성 → 악보 만들기 시작 → 진행상황 탭
-3. 완료되면 카드를 눌러 악보(PDF)·듣기(MP3)·내보내기 확인
+2. 짧은 곡(30초~1분) 선택 → 원곡 구성 → 악보 만들기 시작 → 진행상황 탭
+3. 완료되면 카드를 눌러 악보(PDF)·듣기(MP3)·내보내기 확인 → **보관함에 저장**
 
-## 6. 문제가 생기면
+## F. 문제가 생기면
 | 증상 | 확인 |
 |---|---|
 | 앱: "서버에 연결할 수 없어요" | 터미널 1의 port-forward, `adb reverse`, `curl localhost:8000/health` |
-| 진행상황이 "GPU를 다른 작업이 쓰고 있어서 기다리는 중" | 팀원이 GPU Pod를 쓰는 중. `kubectl get pods` 로 확인, 팀에 비워 달라고 요청 |
-| "GPU 차례를 기다리는 중" 이 오래 | ferrari 노드 GPU를 다른 팀이 쓰는 중 (11/1 저녁 약 40분 대기 사례) |
-| 앱: "서버에서 처리하다 멈췄어요 (...)" | `kubectl logs rocky-api` 와 `kubectl exec rocky-files -- cat /data/rocky-unified/app/<작업번호>.log` |
-| 시연 중 서버가 안 되면 | 진행상황 카드의 **데모 결과 보기**, 또는 업로드 화면의 **데모 곡으로 체험하기** |
+| "GPU를 다른 작업이 쓰고 있어서 기다리는 중" | 같은 워크스페이스에 다른 GPU Pod가 있음. `k5 get pods` 로 확인 |
+| "GPU 차례를 기다리는 중" 이 오래 | 그 노드(ferrari/ford)의 GPU를 다른 팀이 쓰는 중 (11/1 저녁 ferrari 40분 대기) |
+| "서버에서 처리하다 멈췄어요 (...)" | `k5 logs rocky-api`, `k5 exec rocky-files -- tail -50 /data/rocky-unified/app/<작업번호>.log`, `k5 exec rocky-files -- cat /data/rocky-unified/runs/<작업번호>/manifest.json` |
+| 워크스페이스 2의 GPU Pod 오류 | B-2 복사가 끝났는지(크기 비교), 모델 경로 확인 |
+| 시연 중 서버가 안 되면 | 진행상황 카드의 **데모 결과 보기**, 업로드 화면의 **데모 곡으로 체험하기** |
 
-- 곡마다 결과는 `/data/rocky-unified/runs/<작업번호>/` 에 남는다 (분리 음원은 끝나면 지움, 볼륨 여유가 적어서)
-- 시연 전에 실제 곡 2~3개를 미리 돌려 두고 각 폰 보관함에 저장해 두면, 평가자가 기다리지 않고 결과를 볼 수 있다
+- 곡마다 결과는 `/data/rocky-unified/runs/<작업번호>/` 에 남는다 (분리 음원은 끝나면 지움)
+- **시연 전에 실제 곡 2~3개를 미리 돌려 각 폰 보관함에 저장**해 두면 평가자가 기다리지 않는다
+- 평가 시간에는 팀원들에게 GPU Pod를 띄우지 말라고 공유
