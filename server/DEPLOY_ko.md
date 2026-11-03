@@ -140,21 +140,21 @@ k5 logs -f rocky-api        # 1~2분 뒤 "Uvicorn running on http://0.0.0.0:8000
 
 터미널 1 (켜 둔다, 노트북1은 `k5`, 노트북2는 `k22`):
 ```bash
-k5 port-forward pod/rocky-api 8000:8000
+k5 port-forward pod/rocky-api 8080:8000      # 노트북 8080 (8000은 kubelogin 로그인과 부딪혀서 피함)
 ```
 터미널 2 (켜 둔다 — GPU·PDF Pod를 띄우는 agent):
 ```bash
 cd ~/rocky-app-server
-python3 server/agent/rocky_agent.py                                   # ~/.kube/config 계정으로
-# 워크스페이스 2(노트북2): python3 server/agent/rocky_agent.py --kubeconfig ~/.kube/gpu22.yaml
+python3 server/agent/rocky_agent.py --api http://localhost:8080        # ~/.kube/config 계정으로
+# 워크스페이스 2(노트북2): env HOME=$HOME/.kube/home22 python3 server/agent/rocky_agent.py --api http://localhost:8080 --kubeconfig ~/.kube/gpu22.yaml
 ```
 "할 일을 기다려요"가 보이면 정상. 곡이 들어오면 "Pod 생성 → 끝: Succeeded"가 찍힌다.
 
 터미널 3:
 ```bash
-curl localhost:8000/health        # {"ok":true}
+curl localhost:8080/health        # {"ok":true}
 adb devices                       # 폰이 "device" 로 보여야 함 (폰에서 USB 디버깅 허용)
-adb reverse tcp:8000 tcp:8000
+adb reverse tcp:8000 tcp:8080     # 폰의 8000(앱 기본 주소) → 노트북 8080
 ```
 - 케이블이 빠지거나 폰을 재부팅하면 `adb reverse` 를 다시. port-forward 가 끊기면 터미널 1 을 다시 (로그인이 만료되면 브라우저가 다시 뜸)
 - 두 노트북이 같은 워크스페이스(gpu05)에 붙어 있으면 agent는 **한 노트북에서만** 켜도 되고, 둘 다 켜도 요청은 한 쪽만 처리한다
@@ -163,12 +163,12 @@ adb reverse tcp:8000 tcp:8000
 
 ### 노트북 한 대로 두 워크스페이스를 동시에 시험할 때 (포트를 나눔)
 ```bash
-k5  port-forward pod/rocky-api 8000:8000                     # 워크스페이스 1 → 노트북 8000
-k22 port-forward pod/rocky-api 8001:8000                     # 워크스페이스 2 → 노트북 8001
-python3 server/agent/rocky_agent.py --api http://localhost:8000
-env HOME=$HOME/.kube/home22 python3 server/agent/rocky_agent.py --api http://localhost:8001 --kubeconfig ~/.kube/gpu22.yaml
-adb -s <폰1> reverse tcp:8000 tcp:8000                        # 폰1 → 워크스페이스 1
-adb -s <폰2> reverse tcp:8000 tcp:8001                        # 폰2 → 워크스페이스 2 (앱 주소는 그대로 localhost:8000)
+k5  port-forward pod/rocky-api 8080:8000                     # 워크스페이스 1 → 노트북 8080
+k22 port-forward pod/rocky-api 8081:8000                     # 워크스페이스 2 → 노트북 8081
+python3 server/agent/rocky_agent.py --api http://localhost:8080
+env HOME=$HOME/.kube/home22 python3 server/agent/rocky_agent.py --api http://localhost:8081 --kubeconfig ~/.kube/gpu22.yaml
+adb -s <폰1> reverse tcp:8000 tcp:8080                        # 폰1 → 워크스페이스 1
+adb -s <폰2> reverse tcp:8000 tcp:8081                        # 폰2 → 워크스페이스 2 (앱 주소는 그대로 localhost:8000)
 ```
 - agent를 껐다 켜도 괜찮다: 돌던 GPU Pod는 끝까지 돌고, 다시 켠 agent가 이어서 결과를 확인한다
 
@@ -180,7 +180,8 @@ adb -s <폰2> reverse tcp:8000 tcp:8001                        # 폰2 → 워크
 ## F. 문제가 생기면
 | 증상 | 확인 |
 |---|---|
-| 앱: "서버에 연결할 수 없어요" | 터미널 1의 port-forward, `adb reverse`, `curl localhost:8000/health` |
+| 앱: "서버에 연결할 수 없어요" | 터미널 1의 port-forward, `adb reverse tcp:8000 tcp:8080`, `curl localhost:8080/health` |
+| port-forward: "address already in use" | 이미 켜진 port-forward 또는 로그인 대기 중인 kubelogin. `lsof -nP -iTCP:8080 -sTCP:LISTEN` 로 확인 후 `kill <PID>` |
 | 진행상황이 "노트북 연결(agent)을 기다리는 중" | 터미널 2의 agent가 꺼져 있음 → 다시 실행 |
 | agent: "kubectl create 실패" | 로그인 만료일 수 있음 → `kubectl auth whoami` 로 다시 로그인 후 agent 재실행 |
 | "GPU를 다른 작업이 쓰고 있어서 기다리는 중" | 같은 워크스페이스에 다른 GPU Pod가 있음. `k5 get pods` 로 확인 |

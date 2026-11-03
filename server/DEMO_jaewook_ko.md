@@ -26,23 +26,25 @@ git clone -b feature/app-server-v2 https://github.com/kite7104/rocky-team03-fork
 **탭 1 (켜 둠) — 서버 연결**
 ```bash
 kubectl get pod rocky-api                      # STATUS Running 이어야 함
-kubectl port-forward pod/rocky-api 8000:8000   # "Forwarding from 127.0.0.1:8000" 이 보이면 그대로 둠
+kubectl port-forward pod/rocky-api 8080:8000   # "Forwarding from 127.0.0.1:8080" 이 보이면 그대로 둠
 ```
 
 **탭 2 (켜 둠) — GPU Pod를 띄우는 agent**
 ```bash
 cd ~/rocky-app-server
-python3 server/agent/rocky_agent.py
+python3 server/agent/rocky_agent.py --api http://localhost:8080
 ```
 "할 일을 기다려요" 가 보이면 정상. 곡이 들어오면 "Pod 생성 → 끝: Succeeded" 가 찍힌다.
 (팀 계정은 권한 부여가 안 돼서 서버가 GPU Pod를 직접 못 만들고, 이 agent가 노트북 로그인으로 대신 만든다)
 
 **탭 3 — 확인과 폰 연결**
 ```bash
-curl localhost:8000/health          # {"ok":true}
+curl localhost:8080/health          # {"ok":true}
 adb devices                         # 폰이 "device" 로 한 줄
-adb reverse tcp:8000 tcp:8000
+adb reverse tcp:8000 tcp:8080       # 폰의 8000 → 노트북 8080 → 서버
 ```
+노트북 쪽을 8000이 아니라 **8080**으로 쓰는 이유: kubectl 로그인 프로그램(kubelogin)이 브라우저 로그인 때
+8000번을 써서, port-forward가 8000을 잡고 있으면 서로 부딪힌다 (11/3 실제로 겪음).
 
 **앱 확인:** 새 악보 → 밴드 구성 → 음원 업로드 화면 맨 아래 **서버 설정 → 연결 확인 → `연결됨 ✓`**
 
@@ -56,7 +58,8 @@ adb reverse tcp:8000 tcp:8000
   | 노트북 연결(agent)을 기다리는 중 | 탭 2 agent가 꺼짐 → 다시 실행 |
   | 서버에 연결할 수 없어요 | 탭 1 port-forward 끊김 또는 `adb reverse` 풀림 → 다시 |
 - 서버가 안 되면: 진행상황 카드의 **데모 결과 보기**, 업로드 화면의 **데모 곡으로 체험하기**
-- 케이블이 빠지거나 폰을 재부팅하면 → `adb reverse tcp:8000 tcp:8000` 다시
+- 케이블이 빠지거나 폰을 재부팅하면 → `adb reverse tcp:8000 tcp:8080` 다시
+- "address already in use" 가 나오면: `lsof -nP -iTCP:8080 -sTCP:LISTEN` 로 이미 켜진 port-forward 가 있는지 확인
 - 로그인이 만료되면 port-forward/agent가 오류 → `kubectl auth whoami` 로 다시 로그인 후 탭 1·2 다시
 
 ## 3. 끝나고
