@@ -48,6 +48,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
       - run: pytest -q
+        timeout-minutes: 10
 
   # The app on an Android 14 emulator against the real server code
   # (pipeline replaced by server/tests/ci_fake_pipeline.py).

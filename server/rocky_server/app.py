@@ -7,7 +7,8 @@ GET  /jobs/{id}/files/... download one of those files
 GET  /health              liveness check
 
 Settings (environment variables):
-  ROCKY_RUNNER      kubernetes (SGS, default) or subprocess
+  ROCKY_RUNNER      agent (SGS: a laptop agent creates the Pods), kubernetes (the API pod
+                    creates them; needs RBAC) or subprocess (run the commands here)
   ROCKY_HOME        where job records live (default /data/rocky-unified/app)
   ROCKY_RUNS        where unified.py writes each job (default /data/rocky-unified/runs)
   ROCKY_INPUTS      where uploads are saved (default /data/input/app)
@@ -24,8 +25,8 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Body, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi.responses import FileResponse, Response
 
 from .jobs import JobStore, Worker
 from .lineup import APP_PARTS, LineupError, pipeline_args
@@ -140,6 +141,26 @@ def create_app(store: JobStore | None = None, runner=None, start_worker: bool = 
             raise HTTPException(404, "not a result file")
         media = {"pdf": "application/pdf", "mp3": "audio/mpeg"}.get(rel.rsplit(".", 1)[-1], "audio/midi")
         return FileResponse(run / rel, media_type=media, filename=Path(rel).name)
+
+    # ---- laptop agent (ROCKY_RUNNER=agent): server/agent/rocky_agent.py ----
+    if hasattr(runner, "next_request"):
+        @app.get("/agent/next", dependencies=[Depends(check_key)])
+        def agent_next(agent: str):
+            req = runner.next_request(agent[:80])
+            return req if req is not None else Response(status_code=204)
+
+        @app.post("/agent/requests/{rid}/heartbeat", dependencies=[Depends(check_key)])
+        def agent_heartbeat(rid: str, body: dict = Body(...)) -> dict:
+            if not runner.heartbeat(rid, str(body.get("agent", ""))[:80], body.get("note")):
+                raise HTTPException(409, "request is gone or taken by another agent")
+            return {"ok": True}
+
+        @app.post("/agent/requests/{rid}/done", dependencies=[Depends(check_key)])
+        def agent_done(rid: str, body: dict = Body(...)) -> dict:
+            if not runner.finish(rid, str(body.get("agent", ""))[:80], str(body.get("phase", "")),
+                                 str(body.get("log", ""))):
+                raise HTTPException(409, "request is gone or taken by another agent")
+            return {"ok": True}
 
     return app
 

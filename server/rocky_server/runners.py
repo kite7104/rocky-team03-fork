@@ -228,8 +228,11 @@ class KubernetesRunner:
 
 
 def make_runner(kind: str):
+    if kind == "agent":
+        from .agent_runner import AgentRunner
+        return AgentRunner()
     if kind == "kubernetes":
         return KubernetesRunner()
     if kind == "subprocess":
         return SubprocessRunner()
-    raise ValueError(f"unknown ROCKY_RUNNER {kind!r} (kubernetes or subprocess)")
+    raise ValueError(f"unknown ROCKY_RUNNER {kind!r} (agent, kubernetes or subprocess)")

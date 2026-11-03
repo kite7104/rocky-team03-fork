@@ -4,10 +4,17 @@ HTTP API between the Android app and the GPU pipeline
 (`ml/pipeline/unified.py` on the `ml/unified-pipeline` branch).
 
 ```
-app ──upload──▶ API pod (CPU, always on) ──creates──▶ GPU Job: unified.py
-                     │                                 CPU Job: publish_scores.py
+app ──upload──▶ API pod (CPU, always on) ──asks──▶ laptop agent ──creates──▶ GPU Pod: unified.py
+                     │                                                        CPU Pod: publish_scores.py
                      └── reads manifest.json / progress.jsonl / scores/ on the shared volume
 ```
+
+On SGS the team accounts may create Pods but not Roles/RoleBindings, so the API
+pod cannot be given permission to create Pods. With `ROCKY_RUNNER=agent` (used by
+`k8s/api-pod.yaml`) the API queues Pod requests and `agent/rocky_agent.py`, run on a
+laptop logged in with kubectl, creates them, waits out the GPU quota, watches them,
+reports the result through `/agent/*` and deletes them. Step-by-step deployment in
+Korean: `DEPLOY_ko.md`.
 
 The API pod has no GPU, so the 30-minute idle-GPU rule does not apply to it.
 A GPU is used only while a song's GPU Job runs. `ROCKY_PARALLEL` songs run at

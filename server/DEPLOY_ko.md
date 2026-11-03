@@ -4,6 +4,9 @@
 폰1 ─USB─ 노트북1(재욱, 계정 gpu05) ─port-forward─ 워크스페이스 1의 rocky-api ─ GPU(ferrari)
 폰2 ─USB─ 노트북2(채연, 계정 gpu22) ─port-forward─ 워크스페이스 2의 rocky-api ─ GPU(ford)
 ```
+- **팀 계정은 Pod는 만들 수 있지만 권한(Role/RoleBinding)은 못 준다 (11/3 확인).** 그래서 서버 Pod가 GPU Pod를 직접 못 만들고,
+  **각 노트북에서 도는 agent(`server/agent/rocky_agent.py`)가 노트북 로그인 권한으로 GPU·PDF Pod를 대신 띄운다.**
+  시연 중에는 노트북마다 터미널 2개(port-forward, agent)를 켜 둔다
 - 워크스페이스마다 GPU가 1개라서, 폰마다 다른 워크스페이스에 붙이면 두 곡이 동시에 만들어진다
 - 앱의 서버 주소는 두 폰 모두 기본값 `http://localhost:8000` 그대로 (각 폰이 자기 노트북의 8000번으로 감)
 - 워크스페이스 2가 준비되지 않으면 두 폰 모두 워크스페이스 1에 붙여도 된다 (곡은 한 번에 1개씩 차례로)
@@ -64,9 +67,9 @@ k22 auth whoami         # 워크스페이스 2 계정
 
 ### A-4. 권한 확인
 ```bash
-k5 auth can-i create pods ; k5 auth can-i create roles ; k5 auth can-i create rolebindings
+k5 auth can-i create pods        # yes 여야 함 (roles·rolebindings는 no여도 괜찮음 — agent 방식)
+python3 --version                # agent 실행용. 3.8 이상이면 OK (맥 기본 또는 conda)
 ```
-- 셋 다 `yes` 면 계속. `no` 가 있으면 채연 Claude에게 결과를 그대로 전달 (서버를 노트북에서 돌리는 방식으로 바꿈)
 
 ### A-5. 코드 받기
 ```bash
@@ -125,8 +128,7 @@ tar -C server -cf - rocky_server requirements.txt | k5 exec -i rocky-files -- ba
 # 2) 파이프라인이 최신(BS-RoFormer)인지: 1 이상이면 OK
 k5 exec rocky-files -- grep -c bsroformer /data/pipeline/unified.py
 
-# 3) 권한 + 서버 Pod
-k5 apply -f server/k8s/rbac.yaml
+# 3) 서버 Pod (rbac.yaml은 쓰지 않음 — 권한이 없어서 agent 방식)
 k5 apply -f server/k8s/api-pod.yaml
 k5 logs -f rocky-api        # 1~2분 뒤 "Uvicorn running on http://0.0.0.0:8000" 가 보이면 Ctrl+C
 ```
@@ -140,13 +142,23 @@ k5 logs -f rocky-api        # 1~2분 뒤 "Uvicorn running on http://0.0.0.0:8000
 ```bash
 k5 port-forward pod/rocky-api 8000:8000
 ```
-터미널 2:
+터미널 2 (켜 둔다 — GPU·PDF Pod를 띄우는 agent):
+```bash
+cd ~/rocky-app-server
+python3 server/agent/rocky_agent.py                                   # ~/.kube/config 계정으로
+# 워크스페이스 2(노트북2): python3 server/agent/rocky_agent.py --kubeconfig ~/.kube/gpu22.yaml
+```
+"할 일을 기다려요"가 보이면 정상. 곡이 들어오면 "Pod 생성 → 끝: Succeeded"가 찍힌다.
+
+터미널 3:
 ```bash
 curl localhost:8000/health        # {"ok":true}
 adb devices                       # 폰이 "device" 로 보여야 함 (폰에서 USB 디버깅 허용)
 adb reverse tcp:8000 tcp:8000
 ```
 - 케이블이 빠지거나 폰을 재부팅하면 `adb reverse` 를 다시. port-forward 가 끊기면 터미널 1 을 다시 (로그인이 만료되면 브라우저가 다시 뜸)
+- 두 노트북이 같은 워크스페이스(gpu05)에 붙어 있으면 agent는 **한 노트북에서만** 켜도 되고, 둘 다 켜도 요청은 한 쪽만 처리한다
+- agent를 껐다 켜도 괜찮다: 돌던 GPU Pod는 끝까지 돌고, 다시 켠 agent가 이어서 결과를 확인한다
 
 ## E. 앱에서 확인
 1. 새 악보 → 우리 밴드 구성 → 음원 업로드 화면 맨 아래 **서버 설정: http://localhost:8000** → **연결 확인** → `연결됨 ✓`
@@ -157,6 +169,8 @@ adb reverse tcp:8000 tcp:8000
 | 증상 | 확인 |
 |---|---|
 | 앱: "서버에 연결할 수 없어요" | 터미널 1의 port-forward, `adb reverse`, `curl localhost:8000/health` |
+| 진행상황이 "노트북 연결(agent)을 기다리는 중" | 터미널 2의 agent가 꺼져 있음 → 다시 실행 |
+| agent: "kubectl create 실패" | 로그인 만료일 수 있음 → `kubectl auth whoami` 로 다시 로그인 후 agent 재실행 |
 | "GPU를 다른 작업이 쓰고 있어서 기다리는 중" | 같은 워크스페이스에 다른 GPU Pod가 있음. `k5 get pods` 로 확인 |
 | "GPU 차례를 기다리는 중" 이 오래 | 그 노드(ferrari/ford)의 GPU를 다른 팀이 쓰는 중 (11/1 저녁 ferrari 40분 대기) |
 | "서버에서 처리하다 멈췄어요 (...)" | `k5 logs rocky-api`, `k5 exec rocky-files -- tail -50 /data/rocky-unified/app/<작업번호>.log`, `k5 exec rocky-files -- cat /data/rocky-unified/runs/<작업번호>/manifest.json` |
