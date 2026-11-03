@@ -1,6 +1,11 @@
-// AI-generated with Claude Code, 2026-10-15
+// AI-generated with Claude Code, 2026-10-15 (2026-11-03 수정: 실시간 입력 확인, 이메일 인증, 프로필 사진, 내 정보 수정)
 package com.team3.rocky.auth
 
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +21,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -29,9 +36,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,17 +50,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.team3.rocky.AppSettings
+import com.team3.rocky.Avatar
 import com.team3.rocky.Demo
+import com.team3.rocky.InstrumentIcon
 import com.team3.rocky.Page
+import com.team3.rocky.ProfileStore
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -84,7 +102,7 @@ fun LoginScreen(auth: AuthRepository, onLoggedIn: (User) -> Unit, onSignUp: () -
     }
 
     Column(
-        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
+        Modifier.fillMaxSize().statusBarsPadding().imePadding().verticalScroll(rememberScrollState()).padding(24.dp),
     ) {
         Spacer(Modifier.height(48.dp))
         Text("ROCKY", fontSize = 48.sp, fontWeight = FontWeight.Black, color = cs.primary)
@@ -129,39 +147,99 @@ fun LoginScreen(auth: AuthRepository, onLoggedIn: (User) -> Unit, onSignUp: () -
 // ---------- 회원가입 ----------
 @Composable
 fun SignUpScreen(auth: AuthRepository, onBack: () -> Unit, onSignedUp: (User) -> Unit) {
+    val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     var form by remember { mutableStateOf(SignUpForm()) }
-    var errors by remember { mutableStateOf<Map<SignUpValidator.Field, String>>(emptyMap()) }
+    // 가입하기를 누른 뒤에는 비어 있는 칸도 오류를 보여준다.
+    var submitted by remember { mutableStateOf(false) }
+    var serverErrors by remember { mutableStateOf<Map<SignUpValidator.Field, String>>(emptyMap()) }
     var failure by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var termsDialog by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    // 값을 고치면 그 칸의 오류 메시지를 지운다.
-    fun edit(field: SignUpValidator.Field?, change: (SignUpForm) -> SignUpForm) {
+    // 이미 가입된 이메일·닉네임은 입력을 멈추면 바로 알려준다.
+    var emailTaken by remember { mutableStateOf(false) }
+    var nicknameTaken by remember { mutableStateOf(false) }
+    LaunchedEffect(form.email) {
+        emailTaken = false
+        if (SignUpValidator.emailError(form.email) == null) { delay(300); emailTaken = auth.isEmailTaken(form.email) }
+    }
+    LaunchedEffect(form.nickname) {
+        nicknameTaken = false
+        if (SignUpValidator.nicknameError(form.nickname) == null) { delay(300); nicknameTaken = auth.isNicknameTaken(form.nickname) }
+    }
+
+    // 이메일 인증 (시연: 번호를 화면에 보여준다)
+    val verification = remember { EmailVerification() }
+    var codeSent by remember { mutableStateOf(false) }
+    var code by remember { mutableStateOf("") }
+    var verifiedEmail by remember { mutableStateOf<String?>(null) }
+    var codeError by remember { mutableStateOf<String?>(null) }
+    var shownCode by remember { mutableStateOf<String?>(null) }
+    val verified = verifiedEmail != null && verifiedEmail == SignUpValidator.normalizeEmail(form.email)
+
+    // 프로필 사진 (선택)
+    var photoUri by remember { mutableStateOf<Uri?>(null) }
+    var photo by remember { mutableStateOf<ImageBitmap?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) { photoUri = uri; photo = ProfileStore.preview(ctx, uri) }
+    }
+
+    fun show(value: String) = submitted || value.isNotEmpty()
+    val emailErr = serverErrors[SignUpValidator.Field.EMAIL]
+        ?: SignUpValidator.emailError(form.email)?.takeIf { show(form.email) }
+        ?: "이미 가입된 이메일이에요".takeIf { emailTaken }
+    val passwordErr = SignUpValidator.passwordError(form.password)?.takeIf { show(form.password) }
+    val confirmErr = SignUpValidator.passwordConfirmError(form.password, form.passwordConfirm)
+        ?.takeIf { show(form.passwordConfirm) }
+    val nicknameErr = serverErrors[SignUpValidator.Field.NICKNAME]
+        ?: SignUpValidator.nicknameError(form.nickname, typing = !submitted)?.takeIf { show(form.nickname) }
+        ?: "이미 사용 중인 닉네임이에요".takeIf { nicknameTaken }
+    val agreementErr = SignUpValidator.agreementError(form).takeIf { submitted }
+
+    fun edit(change: (SignUpForm) -> SignUpForm) {
         form = change(form)
-        if (field != null) errors = errors - field
+        serverErrors = emptyMap()
         failure = null
+    }
+
+    fun sendCode() {
+        if (SignUpValidator.emailError(form.email) != null || emailTaken) return
+        shownCode = verification.send(form.email)
+        codeSent = true
+        code = ""
+        codeError = null
+    }
+
+    fun checkCode() {
+        codeError = verification.check(form.email, code)
+        if (codeError == null) { verifiedEmail = SignUpValidator.normalizeEmail(form.email); focus.clearFocus() }
     }
 
     fun submit() {
         if (busy) return
         focus.clearFocus()
+        submitted = true
         val local = SignUpValidator.validate(form)
-        if (local.isNotEmpty()) { errors = local; return }
+        if (local.isNotEmpty() || emailTaken || nicknameTaken) return
+        if (!verified) { codeError = "이메일 인증을 완료해 주세요"; return }
         busy = true
         scope.launch {
             when (val r = auth.signUp(form)) {
-                is AuthResult.Success -> onSignedUp(r.user)
-                is AuthResult.Invalid -> errors = r.errors
+                is AuthResult.Success -> {
+                    photoUri?.let { ProfileStore.save(ctx, r.user.id, it) }
+                    onSignedUp(r.user)
+                }
+                is AuthResult.Invalid -> serverErrors = r.errors
                 is AuthResult.Failure -> failure = r.message
             }
             busy = false
         }
     }
 
-    Page("회원가입", onBack, bottom = {
+    Page("회원가입", onBack, dividers = true, bottom = {
         Button(
             onClick = { submit() }, enabled = !busy,
             modifier = Modifier.fillMaxWidth().height(56.dp).testTag("signup_submit"),
@@ -171,73 +249,114 @@ fun SignUpScreen(auth: AuthRepository, onBack: () -> Unit, onSignedUp: (User) ->
         }
     }) {
         Column(Modifier.fillMaxWidth().weight(1f).imePadding().verticalScroll(rememberScrollState())) {
+            Spacer(Modifier.height(16.dp))
             Text("ROCKY와 함께\n밴드 악보를 만들어요", fontSize = 26.sp, fontWeight = FontWeight.Bold, lineHeight = 34.sp)
             Spacer(Modifier.height(24.dp))
 
             SectionLabel("계정")
             AuthField(
-                value = form.email, onValueChange = { v -> edit(SignUpValidator.Field.EMAIL) { it.copy(email = v) } },
+                value = form.email,
+                onValueChange = { v -> edit { it.copy(email = v) }; codeError = null },
                 label = "이메일", keyboardType = KeyboardType.Email, tag = "signup_email",
-                error = errors[SignUpValidator.Field.EMAIL], hint = "로그인할 때 아이디로 써요",
+                error = emailErr,
+                hint = when {
+                    verified -> "✓ 인증 완료"
+                    form.email.isNotEmpty() -> "✓ 사용할 수 있는 이메일이에요"
+                    else -> "로그인할 때 아이디로 써요"
+                },
+                trailing = {
+                    TextButton(
+                        onClick = { sendCode() },
+                        enabled = !verified && SignUpValidator.emailError(form.email) == null && !emailTaken,
+                    ) { Text(if (verified) "인증됨" else if (codeSent) "다시 받기" else "인증번호 받기", fontSize = 12.sp) }
+                },
                 onNext = { focus.moveFocus(FocusDirection.Down) },
             )
+            if (codeSent && !verified) {
+                Spacer(Modifier.height(8.dp))
+                AuthField(
+                    value = code, onValueChange = { code = it.filter(Char::isDigit).take(EmailVerification.CODE_LENGTH); codeError = null },
+                    label = "인증번호 ${EmailVerification.CODE_LENGTH}자리", keyboardType = KeyboardType.NumberPassword,
+                    tag = "signup_code", error = codeError, hint = "메일로 받은 번호를 입력해 주세요 (5분 안에)",
+                    trailing = { TextButton(onClick = { checkCode() }, enabled = code.length == EmailVerification.CODE_LENGTH) { Text("확인") } },
+                    imeAction = ImeAction.Done, onDone = { checkCode() },
+                )
+            } else if (!codeSent && codeError != null) {
+                Text(codeError!!, color = cs.error, fontSize = 12.sp, modifier = Modifier.padding(start = 16.dp))
+            }
             Spacer(Modifier.height(8.dp))
             PasswordField(
-                value = form.password, onValueChange = { v -> edit(SignUpValidator.Field.PASSWORD) { it.copy(password = v) } },
-                label = "비밀번호", tag = "signup_password", error = errors[SignUpValidator.Field.PASSWORD],
-                hint = "영문과 숫자를 포함해 ${SignUpValidator.PASSWORD_MIN}자 이상",
+                value = form.password, onValueChange = { v -> edit { it.copy(password = v) } },
+                label = "비밀번호", tag = "signup_password", error = passwordErr,
+                hint = if (form.password.isNotEmpty()) "✓ 사용할 수 있는 비밀번호예요"
+                else "영문과 숫자를 포함해 ${SignUpValidator.PASSWORD_MIN}자 이상",
                 onNext = { focus.moveFocus(FocusDirection.Down) },
             )
             Spacer(Modifier.height(8.dp))
             PasswordField(
                 value = form.passwordConfirm,
-                onValueChange = { v -> edit(SignUpValidator.Field.PASSWORD_CONFIRM) { it.copy(passwordConfirm = v) } },
-                label = "비밀번호 확인", tag = "signup_password_confirm",
-                error = errors[SignUpValidator.Field.PASSWORD_CONFIRM],
+                onValueChange = { v -> edit { it.copy(passwordConfirm = v) } },
+                label = "비밀번호 확인", tag = "signup_password_confirm", error = confirmErr,
+                hint = if (form.passwordConfirm.isNotEmpty()) "✓ 비밀번호가 일치해요" else null,
                 onNext = { focus.moveFocus(FocusDirection.Down) },
             )
 
             Spacer(Modifier.height(20.dp))
             SectionLabel("프로필")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(photo, form.nickname, 64.dp, Modifier.clickable {
+                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                })
+                Spacer(Modifier.width(14.dp))
+                Column {
+                    Text("프로필 사진 (선택)", fontWeight = FontWeight.Bold)
+                    Row {
+                        TextButton(onClick = {
+                            picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }) { Text(if (photo == null) "사진 고르기" else "다른 사진") }
+                        if (photo != null) TextButton(onClick = { photo = null; photoUri = null }) {
+                            Text("빼기", color = cs.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
             AuthField(
-                value = form.nickname, onValueChange = { v -> edit(SignUpValidator.Field.NICKNAME) { it.copy(nickname = v) } },
-                label = "닉네임", tag = "signup_nickname", error = errors[SignUpValidator.Field.NICKNAME],
-                hint = "${SignUpValidator.NICKNAME_MIN}~${SignUpValidator.NICKNAME_MAX}자, 한글·영문·숫자·_",
+                value = form.nickname, onValueChange = { v -> edit { it.copy(nickname = v) } },
+                label = "닉네임", tag = "signup_nickname", error = nicknameErr,
+                hint = if (form.nickname.isNotEmpty()) "✓ 사용할 수 있는 닉네임이에요"
+                else "${SignUpValidator.NICKNAME_MIN}~${SignUpValidator.NICKNAME_MAX}자, 한글·영문·숫자·_",
                 imeAction = ImeAction.Done, onDone = { focus.clearFocus() },
             )
             Spacer(Modifier.height(16.dp))
-            Text("연주하는 악기 (선택)", fontWeight = FontWeight.Bold)
+            Text("연주하는 파트 (선택)", fontWeight = FontWeight.Bold)
             Text(
-                "새 악보를 만들 때 이 악기들이 미리 선택돼요. 나중에 바꿀 수 있어요.",
-                fontSize = 12.sp, color = cs.onSurfaceVariant,
+                "하나만 고를 수 있어요. 새 악보를 만들 때 미리 선택돼요.",
+                fontSize = 13.sp, color = cs.onSurface,
             )
             Spacer(Modifier.height(10.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Demo.INSTRUMENTS.forEach { inst ->
-                    val on = inst in form.instruments
-                    InstrumentChip(inst, on, Modifier.weight(1f)) {
-                        edit(null) { it.copy(instruments = if (on) it.instruments - inst else it.instruments + inst) }
-                    }
-                }
+            // 한 사람은 파트 하나만 맡는다. 같은 칸을 다시 누르면 선택을 뺀다.
+            PartChips(form.instruments) { inst ->
+                edit { it.copy(instruments = if (inst in it.instruments) emptySet() else setOf(inst)) }
             }
 
             Spacer(Modifier.height(24.dp))
             SectionLabel("약관 동의")
             val all = form.over14 && form.agreeTerms && form.agreePrivacy
             AgreementRow("전체 동의", all, bold = true, tag = "agree_all") { v ->
-                edit(SignUpValidator.Field.AGREEMENT) { it.copy(over14 = v, agreeTerms = v, agreePrivacy = v) }
+                edit { it.copy(over14 = v, agreeTerms = v, agreePrivacy = v) }
             }
             HorizontalDivider(Modifier.padding(vertical = 4.dp), color = cs.surfaceVariant)
             AgreementRow("(필수) 만 14세 이상이에요", form.over14, tag = "agree_age") { v ->
-                edit(SignUpValidator.Field.AGREEMENT) { it.copy(over14 = v) }
+                edit { it.copy(over14 = v) }
             }
             AgreementRow("(필수) 서비스 이용약관", form.agreeTerms, tag = "agree_terms", onView = { termsDialog = TERMS }) { v ->
-                edit(SignUpValidator.Field.AGREEMENT) { it.copy(agreeTerms = v) }
+                edit { it.copy(agreeTerms = v) }
             }
             AgreementRow("(필수) 개인정보 수집·이용", form.agreePrivacy, tag = "agree_privacy", onView = { termsDialog = PRIVACY }) { v ->
-                edit(SignUpValidator.Field.AGREEMENT) { it.copy(agreePrivacy = v) }
+                edit { it.copy(agreePrivacy = v) }
             }
-            (errors[SignUpValidator.Field.AGREEMENT] ?: failure)?.let {
+            (agreementErr ?: failure)?.let {
                 Spacer(Modifier.height(6.dp))
                 Text(it, color = cs.error, fontSize = 13.sp, modifier = Modifier.testTag("signup_error"))
             }
@@ -253,27 +372,138 @@ fun SignUpScreen(auth: AuthRepository, onBack: () -> Unit, onSignedUp: (User) ->
             text = { Text(body, fontSize = 14.sp, modifier = Modifier.verticalScroll(rememberScrollState())) },
         )
     }
+
+    shownCode?.let { c ->
+        AlertDialog(
+            onDismissRequest = { shownCode = null },
+            confirmButton = { TextButton(onClick = { shownCode = null }) { Text("확인") } },
+            title = { Text("인증번호를 보냈어요") },
+            text = {
+                Column {
+                    Text("${SignUpValidator.normalizeEmail(form.email)}로 인증번호를 보냈어요.")
+                    Spacer(Modifier.height(16.dp))
+                    Text("※ 시연 버전이라 메일 대신 여기에 보여드려요.", fontSize = 12.sp, color = cs.onSurfaceVariant)
+                    Text(
+                        c, fontSize = 32.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace,
+                        letterSpacing = 6.sp, color = cs.primary, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                }
+            },
+        )
+    }
 }
 
-// ---------- 내 정보 · 로그아웃 ----------
+// ---------- 내 정보 (수정 · 화면 모드 · 로그아웃) ----------
 @Composable
-fun AccountScreen(user: User, onBack: () -> Unit, onLogout: () -> Unit) {
+fun AccountScreen(
+    user: User,
+    auth: AuthRepository,
+    photoVersion: Int,
+    onBack: () -> Unit,
+    onUpdated: (User) -> Unit,
+    onLogout: () -> Unit,
+) {
+    val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val focus = LocalFocusManager.current
     var confirm by remember { mutableStateOf(false) }
+    var nickname by remember(user) { mutableStateOf(user.nickname) }
+    var parts by remember(user) { mutableStateOf(user.instruments.toSet()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val photo = remember(photoVersion, user.id) { ProfileStore.load(ctx, user.id) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            if (ProfileStore.save(ctx, user.id, uri)) onUpdated(user)
+            else Toast.makeText(ctx, "사진을 불러오지 못했어요", Toast.LENGTH_SHORT).show()
+        }
+    }
+    val dirty = nickname.trim() != user.nickname || parts != user.instruments.toSet()
+    val nicknameErr = error ?: SignUpValidator.nicknameError(nickname, typing = true)
+
+    fun save() {
+        if (busy) return
+        focus.clearFocus()
+        busy = true
+        scope.launch {
+            auth.updateProfile(user, nickname, parts)
+                .onSuccess { onUpdated(it); Toast.makeText(ctx, "내 정보를 저장했어요", Toast.LENGTH_SHORT).show() }
+                .onFailure { error = it.message }
+            busy = false
+        }
+    }
+
     Page("내 정보", onBack, bottom = {
-        OutlinedButton(
-            onClick = { confirm = true },
-            modifier = Modifier.fillMaxWidth().height(52.dp).testTag("logout"),
-        ) { Text("로그아웃") }
+        Button(
+            onClick = { save() }, enabled = dirty && nicknameErr == null && !busy,
+            modifier = Modifier.fillMaxWidth().height(52.dp).testTag("account_save"),
+        ) { Text(if (dirty) "변경사항 저장" else "바뀐 내용이 없어요") }
     }) {
-        Text(user.nickname, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text(user.email, color = cs.onSurfaceVariant)
-        Spacer(Modifier.height(24.dp))
-        InfoRow("연주하는 악기", user.instruments.joinToString(" · ") { Demo.kor(it) }.ifEmpty { "선택 안 함" })
-        InfoRow("로그인 방법", when (user.provider) {
-            AuthProvider.EMAIL -> "이메일"; AuthProvider.GOOGLE -> "Google"; AuthProvider.APPLE -> "Apple"
-        })
-        InfoRow("가입일", SimpleDateFormat("yyyy.MM.dd", Locale.KOREA).format(Date(user.createdAt)))
+        Column(Modifier.weight(1f).imePadding().verticalScroll(rememberScrollState())) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(photo, nickname, 72.dp, Modifier.clickable {
+                    picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                })
+                Spacer(Modifier.width(16.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(user.nickname, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text(user.email, color = cs.onSurfaceVariant, fontSize = 14.sp)
+                    Row {
+                        TextButton(onClick = {
+                            picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }) { Text("사진 바꾸기", fontSize = 13.sp) }
+                        if (photo != null) TextButton(onClick = { ProfileStore.remove(ctx, user.id); onUpdated(user) }) {
+                            Text("사진 삭제", fontSize = 13.sp, color = cs.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            SectionLabel("프로필 수정")
+            AuthField(
+                value = nickname, onValueChange = { nickname = it; error = null },
+                label = "닉네임", tag = "account_nickname", error = nicknameErr,
+                hint = "${SignUpValidator.NICKNAME_MIN}~${SignUpValidator.NICKNAME_MAX}자, 한글·영문·숫자·_",
+                imeAction = ImeAction.Done, onDone = { focus.clearFocus() },
+            )
+            Spacer(Modifier.height(12.dp))
+            Text("연주하는 파트", fontWeight = FontWeight.Bold)
+            Text("하나만 고를 수 있어요. 새 악보를 만들 때 미리 선택돼요.", fontSize = 13.sp, color = cs.onSurface)
+            Spacer(Modifier.height(10.dp))
+            PartChips(parts) { p -> parts = if (p in parts) emptySet() else setOf(p); error = null }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("화면")
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(cs.surface)
+                    .clickable { AppSettings.setDark(ctx, !AppSettings.dark) }
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("다크 모드", fontWeight = FontWeight.Bold)
+                    Text(if (AppSettings.dark) "어두운 화면을 쓰고 있어요" else "밝은 화면을 쓰고 있어요",
+                        fontSize = 12.sp, color = cs.onSurfaceVariant)
+                }
+                Switch(checked = AppSettings.dark, onCheckedChange = { AppSettings.setDark(ctx, it) },
+                    modifier = Modifier.testTag("dark_mode"))
+            }
+
+            Spacer(Modifier.height(24.dp))
+            SectionLabel("계정")
+            InfoRow("로그인 방법", when (user.provider) {
+                AuthProvider.EMAIL -> "이메일"; AuthProvider.GOOGLE -> "Google"; AuthProvider.APPLE -> "Apple"
+            })
+            InfoRow("가입일", SimpleDateFormat("yyyy.MM.dd", Locale.KOREA).format(Date(user.createdAt)))
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { confirm = true }, modifier = Modifier.testTag("logout")) {
+                Text("로그아웃", color = cs.error)
+            }
+            Spacer(Modifier.height(16.dp))
+        }
     }
     if (confirm) {
         AlertDialog(
@@ -285,7 +515,7 @@ fun AccountScreen(user: User, onBack: () -> Unit, onLogout: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { confirm = false }) { Text("취소") } },
             title = { Text("로그아웃할까요?") },
-            text = { Text("저장한 악보는 지워지지 않아요. 다시 로그인하면 볼 수 있어요.") },
+            text = { Text("저장한 악보는 지워지지 않아요. 다시 로그인하면 볼 수 있어요.\n만들고 있던 악보는 취소돼요.") },
         )
     }
 }
@@ -307,6 +537,7 @@ private fun AuthField(
     error: String? = null,
     hint: String? = null,
     imeAction: ImeAction = ImeAction.Next,
+    trailing: (@Composable () -> Unit)? = null,
     onNext: () -> Unit = {},
     onDone: () -> Unit = {},
 ) {
@@ -314,6 +545,7 @@ private fun AuthField(
         value = value, onValueChange = onValueChange, label = { Text(label) },
         singleLine = true, isError = error != null,
         supportingText = (error ?: hint)?.let { { Text(it) } },
+        trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType, imeAction = imeAction),
         keyboardActions = KeyboardActions(onNext = { onNext() }, onDone = { onDone() }),
         modifier = Modifier.fillMaxWidth().testTag(tag),
@@ -347,10 +579,21 @@ private fun PasswordField(
     )
 }
 
+/** 피아노·드럼·베이스·기타·보컬 중 여러 개 고르기. */
+@Composable
+private fun PartChips(selected: Set<String>, onToggle: (String) -> Unit) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Demo.PARTS.forEach { inst ->
+            InstrumentChip(inst, inst in selected, Modifier.weight(1f)) { onToggle(inst) }
+        }
+    }
+}
+
 @Composable
 private fun InstrumentChip(inst: String, on: Boolean, modifier: Modifier, onClick: () -> Unit) {
     val cs = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(14.dp)
+    val fg = if (on) cs.onPrimary else cs.onSurface
     Column(
         modifier
             .clip(shape)
@@ -361,11 +604,10 @@ private fun InstrumentChip(inst: String, on: Boolean, modifier: Modifier, onClic
             .testTag("instrument_$inst"),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(Demo.emoji(inst), fontSize = 22.sp)
-        Text(
-            Demo.kor(inst), fontSize = 13.sp, fontWeight = FontWeight.Bold,
-            color = if (on) cs.onPrimary else cs.onSurface,
-        )
+        // 고르면 그림도 글자와 같은 색으로 바뀐다.
+        InstrumentIcon(inst, fg, size = 26.dp)
+        Spacer(Modifier.height(2.dp))
+        Text(Demo.kor(inst), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)
     }
 }
 
@@ -412,7 +654,7 @@ private val TERMS = "서비스 이용약관" to """
 """.trimIndent()
 
 private val PRIVACY = "개인정보 수집·이용" to """
-    • 수집 항목: 이메일, 비밀번호(복원할 수 없는 형태로 암호화해 저장), 닉네임, 연주하는 악기(선택), 약관 동의 시각
+    • 수집 항목: 이메일, 비밀번호(복원할 수 없는 형태로 암호화해 저장), 닉네임, 연주하는 파트(선택), 프로필 사진(선택), 약관 동의 시각
     • 이용 목적: 회원 식별과 로그인, 악보 보관함 제공, 악보 만들기 기본 설정
     • 보관 기간: 회원 탈퇴 시까지
     • 현재 버전은 회원 정보를 이 기기 안에만 저장하며 외부로 보내지 않습니다.

@@ -48,6 +48,13 @@ class SignUpValidatorTest {
         assertNull(SignUpValidator.nicknameError("  Rocky_03 "))
     }
 
+    @Test fun koreanJamoIsAllowedOnlyWhileTyping() {
+        // '락스ㅌ'처럼 한글을 치는 도중의 낱자는 입력 중에는 오류로 보지 않는다.
+        assertNull(SignUpValidator.nicknameError("락스ㅌ", typing = true))
+        assertNotNull(SignUpValidator.nicknameError("락스ㅌ"))
+        assertNull(SignUpValidator.nicknameError("락스타"))
+    }
+
     @Test fun allRequiredAgreementsAreNeeded() {
         listOf(valid.copy(over14 = false), valid.copy(agreeTerms = false), valid.copy(agreePrivacy = false)).forEach {
             assertEquals(setOf(Field.AGREEMENT), SignUpValidator.validate(it).keys)

@@ -16,7 +16,10 @@ enum class Stage(val title: String, val desc: String, val weight: Float) {
     SEPARATE("음원 분리 중", "보컬을 빼고 악기 소리만 남기고 있어요", 0.10f),
     TRANSCRIBE("채보 중", "음원에서 악기별 음을 찾고 있어요", 0.75f),
     BEATS("박자 맞추는 중", "박과 마디 위치를 찾고 있어요", 0.05f),
-    ARRANGE("밴드 편곡 중", "고른 악기로 악보를 만들고 있어요", 0.10f),
+    ARRANGE("밴드 편곡 중", "고른 악기로 악보를 만들고 있어요", 0.10f);
+
+    /** 1부터 세는 단계 번호 */
+    val index get() = ordinal + 1
 }
 
 /**

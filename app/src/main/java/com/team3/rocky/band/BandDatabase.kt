@@ -54,6 +54,7 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
                 title          TEXT    NOT NULL,
                 instruments    TEXT    NOT NULL,
                 work_date      TEXT    NOT NULL,
+                original       TEXT    NOT NULL DEFAULT '',
                 shared_by      INTEGER NOT NULL,
                 shared_by_name TEXT    NOT NULL,
                 shared_at      INTEGER NOT NULL,
@@ -66,7 +67,8 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // 버전 1이 첫 스키마다.
+        // 버전 2: 공유 악보에 원곡 구성(original)을 더했다. 기존 밴드·악보는 그대로 둔다.
+        if (oldVersion < 2) db.execSQL("ALTER TABLE shared_scores ADD COLUMN original TEXT NOT NULL DEFAULT ''")
     }
 
     // ---------- 밴드 ----------
@@ -86,6 +88,10 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
 
     fun deleteBand(id: Long) {
         writableDatabase.delete("bands", "id = ?", arrayOf(id.toString()))
+    }
+
+    fun rename(bandId: Long, name: String) {
+        writableDatabase.update("bands", ContentValues().apply { put("name", name) }, "id = ?", arrayOf(bandId.toString()))
     }
 
     fun setOwner(bandId: Long, userId: Long) {
@@ -134,6 +140,13 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
             arrayOf(bandId.toString(), userId.toString()),
         ).use { it.moveToFirst() }
 
+    /** 닉네임을 바꾸면 내가 들어간 모든 밴드와 내가 공유한 악보에도 반영한다. */
+    fun updateNickname(userId: Long, nickname: String) {
+        val db = writableDatabase
+        db.update("band_members", ContentValues().apply { put("nickname", nickname) }, "user_id = ?", arrayOf(userId.toString()))
+        db.update("shared_scores", ContentValues().apply { put("shared_by_name", nickname) }, "shared_by = ?", arrayOf(userId.toString()))
+    }
+
     fun deleteMember(bandId: Long, userId: Long) {
         writableDatabase.delete(
             "band_members", "band_id = ? AND user_id = ?", arrayOf(bandId.toString(), userId.toString()),
@@ -161,9 +174,22 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
         val values = ContentValues().apply {
             put("band_id", bandId); put("work_id", work.id); put("title", work.title)
             put("instruments", work.instruments.joinToString(",")); put("work_date", work.date)
+            put("original", work.original.joinToString(","))
             put("shared_by", byId); put("shared_by_name", byName); put("shared_at", now)
         }
         return writableDatabase.insertWithOnConflict("shared_scores", null, values, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+    }
+
+    fun renameScore(scoreId: Long, title: String) {
+        writableDatabase.update("shared_scores", ContentValues().apply { put("title", title) }, "id = ?", arrayOf(scoreId.toString()))
+    }
+
+    /** 보관함에서 이름을 바꾸면, 내가 밴드에 공유한 같은 악보의 이름도 바꾼다. */
+    fun renameSharedWork(userId: Long, workId: Long, title: String) {
+        writableDatabase.update(
+            "shared_scores", ContentValues().apply { put("title", title) },
+            "shared_by = ? AND work_id = ?", arrayOf(userId.toString(), workId.toString()),
+        )
     }
 
     fun scores(bandId: Long): List<SharedScore> =
@@ -180,6 +206,7 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
                             title = c.str("title"),
                             instruments = c.str("instruments").split(",").filter { it.isNotBlank() },
                             date = c.str("work_date"),
+                            original = c.str("original").split(",").filter { it.isNotBlank() },
                         ),
                         sharedById = c.long("shared_by"),
                         sharedByName = c.str("shared_by_name"),
@@ -224,6 +251,7 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
         db.insertOrThrow("shared_scores", null, ContentValues().apply {
             put("band_id", bandId); put("work_id", 1L); put("title", Demo.SONG_TITLE)
             put("instruments", Demo.INSTRUMENTS.joinToString(",")); put("work_date", "2026.10.30 21:10")
+            put("original", Demo.DEMO_ORIGINAL.joinToString(","))
             put("shared_by", -1L); put("shared_by_name", "지민"); put("shared_at", t + 10)
         })
     }
@@ -231,6 +259,6 @@ class BandDatabase(context: Context, name: String? = DB_NAME, private val seedDe
     companion object {
         const val DB_NAME = "rocky_bands.db"
         const val DEMO_CODE = "BAND33"
-        private const val VERSION = 1
+        private const val VERSION = 2
     }
 }

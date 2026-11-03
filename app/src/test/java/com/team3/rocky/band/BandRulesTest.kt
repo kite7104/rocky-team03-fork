@@ -37,4 +37,11 @@ class BandRulesTest {
             assertNull(BandRules.validateCode(code))
         }
     }
+
+    @Test fun emojiCountsAsOneLetter() {
+        assertEquals(3, BandRules.length("🎸락"+"🔥"))
+        val long = "🎸".repeat(BandRules.NAME_MAX + 5)
+        assertEquals(BandRules.NAME_MAX, BandRules.length(BandRules.limitName(long)))
+        assertNull(BandRules.validateName("🎸".repeat(BandRules.NAME_MAX)))
+    }
 }

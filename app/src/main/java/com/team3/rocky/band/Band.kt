@@ -17,7 +17,7 @@ data class Band(
 data class BandMember(
     val userId: Long,
     val nickname: String,
-    /** piano, drums, bass, guitar 중 하나 */
+    /** piano, drums, bass, guitar, vocal 중 하나 */
     val instrument: String,
     val isOwner: Boolean,
 )
@@ -61,12 +61,18 @@ object BandRules {
     // 헷갈리기 쉬운 0/O, 1/I/L은 뺀다.
     const val CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
+    /** 글자 수. 이모티콘도 한 글자로 센다. */
+    fun length(s: String) = s.codePointCount(0, s.length)
+
+    /** [NAME_MAX]자를 넘으면 자른다. 이모티콘이 반으로 잘리지 않게 글자 단위로 자른다. */
+    fun limitName(s: String) = if (length(s) <= NAME_MAX) s else s.substring(0, s.offsetByCodePoints(0, NAME_MAX))
+
     /** 문제가 없으면 null, 있으면 화면에 보여줄 메시지. */
     fun validateName(raw: String): String? {
         val name = raw.trim()
         return when {
             name.isEmpty() -> "밴드 이름을 입력해 주세요"
-            name.length > NAME_MAX -> "밴드 이름은 ${NAME_MAX}자까지 쓸 수 있어요"
+            length(name) > NAME_MAX -> "밴드 이름은 ${NAME_MAX}자까지 쓸 수 있어요"
             else -> null
         }
     }

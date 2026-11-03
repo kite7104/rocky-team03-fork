@@ -71,6 +71,32 @@ class AuthRepository(
         AuthResult.Success(user)
     }
 
+    /** 회원가입 화면에서 입력하는 동안 바로 알려주기 위한 중복 확인. */
+    suspend fun isEmailTaken(email: String): Boolean = withContext(Dispatchers.IO) {
+        db.emailExists(SignUpValidator.normalizeEmail(email))
+    }
+
+    suspend fun isNicknameTaken(nickname: String, exceptUserId: Long? = null): Boolean = withContext(Dispatchers.IO) {
+        val n = nickname.trim()
+        if (exceptUserId == null) db.nicknameExists(n) else db.nicknameTakenByOther(n, exceptUserId)
+    }
+
+    /** 내 정보 수정. 성공하면 바뀐 회원 정보를, 실패하면 화면에 보여줄 메시지를 돌려준다. */
+    suspend fun updateProfile(user: User, nickname: String, instruments: Set<String>): Result<User> =
+        withContext(Dispatchers.IO) {
+            val n = nickname.trim()
+            SignUpValidator.nicknameError(n)?.let { return@withContext Result.failure(IllegalArgumentException(it)) }
+            if (db.nicknameTakenByOther(n, user.id)) {
+                return@withContext Result.failure(IllegalArgumentException("이미 사용 중인 닉네임이에요"))
+            }
+            try {
+                db.updateProfile(user.id, n, INSTRUMENT_ORDER.filter { it in instruments })
+            } catch (e: UserDatabase.DuplicateException) {
+                return@withContext Result.failure(IllegalArgumentException("이미 사용 중인 닉네임이에요"))
+            }
+            Result.success(db.findById(user.id)!!)
+        }
+
     fun logout() {
         prefs.edit().remove(KEY_USER_ID).apply()
     }
@@ -91,7 +117,7 @@ class AuthRepository(
         private const val PREF = "rocky_session"
         private const val KEY_USER_ID = "user_id"
         private const val NO_USER = -1L
-        private val INSTRUMENT_ORDER = listOf("piano", "drums", "bass", "guitar")
+        private val INSTRUMENT_ORDER = listOf("piano", "drums", "bass", "guitar", "vocal")
 
         /** 보관함처럼 회원별로 나눠 저장하는 데이터가 쓰는 현재 회원 id. 로그인 전이면 null. */
         fun currentUserId(context: Context): Long? =

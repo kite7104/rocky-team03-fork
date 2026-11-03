@@ -10,6 +10,8 @@ object SignUpValidator {
 
     private val EMAIL = Regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}$")
     private val NICKNAME = Regex("^[가-힣A-Za-z0-9_]+$")
+    // 한글을 치는 도중에는 'ㅎ', 'ㅏ'처럼 낱자가 잠깐 들어온다.
+    private val NICKNAME_TYPING = Regex("^[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9_]+$")
 
     fun normalizeEmail(email: String) = email.trim().lowercase()
 
@@ -37,12 +39,13 @@ object SignUpValidator {
         else -> null
     }
 
-    fun nicknameError(nickname: String): String? {
+    /** @param typing 입력하는 중이면 한글 낱자(ㅎ, ㅏ …)를 오류로 보지 않는다. */
+    fun nicknameError(nickname: String, typing: Boolean = false): String? {
         val n = nickname.trim()
         return when {
             n.isEmpty() -> "닉네임을 입력해 주세요"
             n.length < NICKNAME_MIN || n.length > NICKNAME_MAX -> "닉네임은 ${NICKNAME_MIN}~${NICKNAME_MAX}자로 정해 주세요"
-            !NICKNAME.matches(n) -> "닉네임은 한글, 영문, 숫자, _만 쓸 수 있어요"
+            !(if (typing) NICKNAME_TYPING else NICKNAME).matches(n) -> "닉네임은 한글, 영문, 숫자, _만 쓸 수 있어요"
             else -> null
         }
     }

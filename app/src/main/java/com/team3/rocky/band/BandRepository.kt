@@ -21,6 +21,18 @@ interface BandRepository {
 
     /** 새로 공유했으면 true, 이미 공유된 악보면 false. */
     suspend fun share(user: User, bandId: Long, work: Work): Boolean
+
+    /** 방장만 밴드 이름을 바꿀 수 있다. */
+    suspend fun rename(user: User, bandId: Long, name: String): BandResult
+
+    /** 공유된 악보 이름 바꾸기. 공유한 사람이나 방장만 할 수 있다. 성공하면 true. */
+    suspend fun renameScore(user: User, bandId: Long, scoreId: Long, title: String): Boolean
+
+    /** 보관함에서 이름을 바꾼 악보를, 내가 공유한 밴드에서도 같은 이름으로 바꾼다. */
+    suspend fun renameMyWork(userId: Long, workId: Long, title: String)
+
+    /** 내 정보에서 닉네임을 바꾸면 밴드 멤버 목록에도 반영한다. */
+    suspend fun updateNickname(user: User)
 }
 
 /** 이 폰 안에서만 동작하는 구현 (서버 연결 전 시연용). */
@@ -74,6 +86,28 @@ class LocalBandRepository(
     override suspend fun share(user: User, bandId: Long, work: Work): Boolean = io {
         db.insertScore(bandId, work, user.id, user.nickname, clock())
     }
+
+    override suspend fun rename(user: User, bandId: Long, name: String): BandResult = io {
+        BandRules.validateName(name)?.let { return@io BandResult.Failure(it) }
+        val band = db.findBand(bandId) ?: return@io BandResult.Failure("밴드를 찾을 수 없어요")
+        if (band.ownerId != user.id) return@io BandResult.Failure("방장만 밴드 이름을 바꿀 수 있어요")
+        db.rename(bandId, name.trim())
+        BandResult.Success(db.findBand(bandId)!!)
+    }
+
+    override suspend fun renameScore(user: User, bandId: Long, scoreId: Long, title: String): Boolean = io {
+        val band = db.findBand(bandId) ?: return@io false
+        val score = db.scores(bandId).firstOrNull { it.id == scoreId } ?: return@io false
+        if (title.isBlank() || (score.sharedById != user.id && band.ownerId != user.id)) return@io false
+        db.renameScore(scoreId, title.trim())
+        true
+    }
+
+    override suspend fun renameMyWork(userId: Long, workId: Long, title: String) = io {
+        db.renameSharedWork(userId, workId, title.trim())
+    }
+
+    override suspend fun updateNickname(user: User) = io { db.updateNickname(user.id, user.nickname) }
 
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { block() }
 

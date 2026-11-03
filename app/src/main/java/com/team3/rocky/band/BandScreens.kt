@@ -3,7 +3,6 @@ package com.team3.rocky.band
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -57,7 +56,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.team3.rocky.Demo
+import com.team3.rocky.EmojiRow
+import com.team3.rocky.InfoNote
+import com.team3.rocky.InstrumentIcon
 import com.team3.rocky.Page
+import com.team3.rocky.TextInputDialog
 import com.team3.rocky.Work
 import com.team3.rocky.WorkStore
 import com.team3.rocky.auth.User
@@ -71,14 +74,15 @@ import java.util.Locale
 fun BandListScreen(
     user: User,
     repo: BandRepository,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)?,
     onOpen: (Long) -> Unit,
     onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val cs = MaterialTheme.colorScheme
     val bands by produceState<List<BandSummary>?>(null, user.id) { value = repo.myBands(user) }
 
-    Page("나의 밴드", onBack, bottom = {
+    Page("나의 밴드", onBack, modifier = modifier, bottom = {
         Button(onClick = onAdd, modifier = Modifier.fillMaxWidth().height(56.dp).testTag("band_add")) {
             Text("+ 밴드 만들기 · 참여하기", fontSize = 17.sp)
         }
@@ -89,7 +93,7 @@ fun BandListScreen(
             list.isEmpty() -> {
                 Spacer(Modifier.height(64.dp))
                 Text(
-                    "아직 참여한 밴드가 없어요.\n밴드를 만들고 멤버에게 초대 코드를 보내 보세요.",
+                    "아직 참여한 밴드가 없어요.\n밴드를 만들고 멤버에게 초대 코드를 알려 주세요.",
                     color = cs.onSurfaceVariant, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(24.dp))
@@ -105,7 +109,7 @@ fun BandListScreen(
                             .padding(18.dp)
                             .testTag("band_${s.band.id}"),
                     ) {
-                        Text(s.band.name, fontWeight = FontWeight.Bold, fontSize = 19.sp)
+                        Text(s.band.name, fontWeight = FontWeight.Bold, fontSize = 19.sp, maxLines = 1)
                         Spacer(Modifier.height(4.dp))
                         Text("멤버 ${s.memberCount}명 · 공유 악보 ${s.scoreCount}개", fontSize = 13.sp, color = cs.onSurfaceVariant)
                         Spacer(Modifier.height(10.dp))
@@ -128,7 +132,7 @@ fun BandJoinScreen(user: User, repo: BandRepository, onBack: () -> Unit, onDone:
     var name by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
     // 회원가입 때 고른 첫 악기를 기본 파트로 둔다.
-    var instrument by remember { mutableStateOf(user.instruments.firstOrNull() ?: Demo.INSTRUMENTS.first()) }
+    var instrument by remember { mutableStateOf(user.instruments.firstOrNull() ?: Demo.PARTS.first()) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
@@ -180,22 +184,23 @@ fun BandJoinScreen(user: User, repo: BandRepository, onBack: () -> Unit, onDone:
             } else {
                 OutlinedTextField(
                     value = name,
-                    onValueChange = { name = it.take(BandRules.NAME_MAX); error = null },
+                    onValueChange = { name = BandRules.limitName(it); error = null },
                     label = { Text("밴드 이름") },
                     singleLine = true, isError = error != null,
-                    supportingText = { Text("${name.trim().length} / ${BandRules.NAME_MAX}") },
+                    supportingText = { Text("${BandRules.length(name.trim())} / ${BandRules.NAME_MAX}") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { focus.clearFocus() }),
                     modifier = Modifier.fillMaxWidth().testTag("band_name"),
                 )
+                EmojiRow { e -> name = BandRules.limitName(name + e); error = null }
             }
             Spacer(Modifier.height(20.dp))
             Text("이 밴드에서 내 파트", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = cs.primary)
             Spacer(Modifier.height(4.dp))
-            Text("공유된 악보를 열면 내 파트 악보가 먼저 보여요", fontSize = 13.sp, color = cs.onSurfaceVariant)
+            Text("공유된 악보를 열면 내 파트 악보가 먼저 보여요. 보컬은 밴드 전체 악보를 봐요.", fontSize = 14.sp, color = cs.onSurface)
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Demo.INSTRUMENTS.forEach { inst ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Demo.PARTS.forEach { inst ->
                     PartChip(inst, inst == instrument, Modifier.weight(1f)) { instrument = inst }
                 }
             }
@@ -220,25 +225,35 @@ fun BandDetailScreen(
     onBack: () -> Unit,
     onOpenScore: (Work, String?) -> Unit,
     onShareScore: () -> Unit,
-    onNewScore: (Set<String>) -> Unit,
+    onNewScore: (List<String>) -> Unit,
     onLeft: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val cs = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
-    val detail by produceState<BandDetail?>(null, bandId) { value = repo.detail(bandId) }
+    // 이름을 바꾸면 숫자를 올려서 다시 읽는다.
+    var version by remember { mutableStateOf(0) }
+    val detail by produceState<BandDetail?>(null, bandId, version) { value = repo.detail(bandId) }
     var confirmLeave by remember { mutableStateOf(false) }
+    var renamingBand by remember { mutableStateOf(false) }
+    var renamingScore by remember { mutableStateOf<SharedScore?>(null) }
     val d = detail
     val myPart = d?.instrumentOf(user.id)
+    val isOwner = d != null && d.band.ownerId == user.id
 
-    Page(d?.band?.name ?: "밴드", onBack, bottom = {
+    Page(d?.band?.name ?: "밴드", onBack, actions = {
+        // 방장만 밴드 이름을 바꿀 수 있다.
+        if (isOwner) TextButton(onClick = { renamingBand = true }, modifier = Modifier.testTag("band_rename")) {
+            Text("이름 수정")
+        }
+    }, bottom = {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = onShareScore, enabled = d != null,
                 modifier = Modifier.weight(1f).height(52.dp).testTag("band_share_score"),
             ) { Text("악보 공유") }
             Button(
-                onClick = { d?.let { onNewScore(it.members.map { m -> m.instrument }.toSet()) } },
+                onClick = { d?.let { onNewScore(it.members.map { m -> m.instrument }) } },
                 enabled = d != null,
                 modifier = Modifier.weight(1f).height(52.dp).testTag("band_new_score"),
             ) { Text("이 밴드로 새 악보") }
@@ -265,12 +280,8 @@ fun BandDetailScreen(
                 TextButton(onClick = {
                     ctx.getSystemService(ClipboardManager::class.java)
                         .setPrimaryClip(ClipData.newPlainText("ROCKY 초대 코드", d.band.inviteCode))
+                    Toast.makeText(ctx, "초대 코드를 복사했어요. 멤버에게 붙여넣어 보내 주세요", Toast.LENGTH_SHORT).show()
                 }) { Text("복사") }
-                TextButton(onClick = {
-                    val text = "ROCKY에서 '${d.band.name}' 밴드에 들어와! 초대 코드: ${d.band.inviteCode}"
-                    val send = Intent(Intent.ACTION_SEND).apply { type = "text/plain"; putExtra(Intent.EXTRA_TEXT, text) }
-                    ctx.startActivity(Intent.createChooser(send, "초대 코드 보내기"))
-                }) { Text("보내기") }
             }
 
             Spacer(Modifier.height(28.dp))
@@ -283,7 +294,7 @@ fun BandDetailScreen(
                     Box(
                         Modifier.size(42.dp).clip(CircleShape).background(cs.surface),
                         contentAlignment = Alignment.Center,
-                    ) { Text(Demo.emoji(m.instrument), fontSize = 20.sp) }
+                    ) { InstrumentIcon(m.instrument, cs.primary, size = 24.dp) }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -314,7 +325,17 @@ fun BandDetailScreen(
                         .padding(16.dp)
                         .testTag("band_score_${s.id}"),
                 ) {
-                    Text(s.work.title, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(s.work.title, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                        // 공유한 사람과 방장은 악보 이름을 바꿀 수 있다.
+                        if (s.sharedById == user.id || isOwner) {
+                            Text(
+                                "이름 수정", fontSize = 12.sp, color = cs.primary,
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { renamingScore = s }
+                                    .padding(horizontal = 6.dp, vertical = 4.dp).testTag("score_rename_${s.id}"),
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "${s.sharedByName}님이 공유 · ${DATE.format(Date(s.sharedAt))}",
@@ -325,7 +346,7 @@ fun BandDetailScreen(
                         s.work.instruments.forEach { inst ->
                             val mine = inst == myPart
                             Text(
-                                (if (mine) "내 파트 · " else "") + Demo.kor(inst),
+                                (if (mine) "내 파트 · " else "") + Demo.label(inst, s.work.instruments),
                                 fontSize = 12.sp, fontWeight = if (mine) FontWeight.Bold else FontWeight.Normal,
                                 color = if (mine) cs.onPrimary else cs.onSurfaceVariant,
                                 modifier = Modifier
@@ -344,6 +365,34 @@ fun BandDetailScreen(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+
+    if (renamingBand && d != null) {
+        TextInputDialog(
+            title = "밴드 이름 수정", initial = d.band.name, label = "밴드 이름", maxLength = BandRules.NAME_MAX,
+            emoji = true, validate = BandRules::validateName,
+            onDismiss = { renamingBand = false },
+            onConfirm = { name ->
+                scope.launch {
+                    when (val r = repo.rename(user, d.band.id, name)) {
+                        is BandResult.Success -> { renamingBand = false; version++ }
+                        is BandResult.Failure -> Toast.makeText(ctx, r.message, Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+        )
+    }
+    renamingScore?.let { s ->
+        TextInputDialog(
+            title = "악보 이름 수정", initial = s.work.title, label = "악보 이름", maxLength = 60,
+            onDismiss = { renamingScore = null },
+            onConfirm = { t ->
+                scope.launch {
+                    if (repo.renameScore(user, bandId, s.id, t)) { renamingScore = null; version++ }
+                    else Toast.makeText(ctx, "이름을 바꿀 수 없어요", Toast.LENGTH_SHORT).show()
+                }
+            },
+        )
     }
 
     if (confirmLeave && d != null) {
@@ -423,7 +472,7 @@ fun ShareToBandScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(Modifier.weight(1f)) {
-                            Text(s.band.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            Text(s.band.name, fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
                             Text("멤버 ${s.memberCount}명", fontSize = 13.sp, color = cs.onSurfaceVariant)
                         }
                         Text("공유", color = cs.primary, fontWeight = FontWeight.Bold)
@@ -471,7 +520,7 @@ fun PickScoreScreen(user: User, repo: BandRepository, bandId: Long, onBack: () -
                     Text(w.title, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        w.instruments.joinToString(" · ") { Demo.kor(it) } + "   |   " + w.date,
+                        Demo.labels(w.instruments) + "   |   " + w.date,
                         fontSize = 13.sp, color = cs.onSurfaceVariant,
                     )
                 }
@@ -493,11 +542,9 @@ private fun Loading() {
 /** 서버가 없어서 친구를 초대할 수 없으니, 미리 넣어둔 예시 밴드로 들어가는 방법을 알려준다. */
 @Composable
 private fun DemoHint() {
-    val cs = MaterialTheme.colorScheme
-    Text(
-        "※ 시연 버전: 초대 코드 ${BandDatabase.DEMO_CODE}로 예시 밴드에 참여해 볼 수 있어요. " +
+    InfoNote(
+        "시연 버전: 초대 코드 ${BandDatabase.DEMO_CODE}로 예시 밴드에 참여해 볼 수 있어요. " +
             "지금은 같은 폰 안에서만 공유돼요.",
-        fontSize = 12.sp, color = cs.onSurfaceVariant,
     )
 }
 
@@ -526,14 +573,17 @@ private fun Tag(text: String, color: androidx.compose.ui.graphics.Color) {
 @Composable
 private fun PartBadge(inst: String) {
     val cs = MaterialTheme.colorScheme
-    Text(
-        "내 파트  ${Demo.emoji(inst)} ${Demo.kor(inst)}",
-        fontSize = 13.sp, fontWeight = FontWeight.Bold, color = cs.primary,
-        modifier = Modifier
+    Row(
+        Modifier
             .clip(RoundedCornerShape(10.dp))
             .background(cs.primary.copy(alpha = 0.14f))
             .padding(horizontal = 10.dp, vertical = 5.dp),
-    )
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("내 파트  ", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = cs.primary)
+        InstrumentIcon(inst, cs.primary, size = 16.dp)
+        Text(" ${Demo.kor(inst)}", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = cs.primary)
+    }
 }
 
 @Composable
@@ -550,11 +600,10 @@ private fun PartChip(inst: String, on: Boolean, modifier: Modifier, onClick: () 
             .testTag("part_$inst"),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(Demo.emoji(inst), fontSize = 22.sp)
-        Text(
-            Demo.kor(inst), fontSize = 13.sp, fontWeight = FontWeight.Bold,
-            color = if (on) cs.onPrimary else cs.onSurface,
-        )
+        val fg = if (on) cs.onPrimary else cs.onSurface
+        InstrumentIcon(inst, fg, size = 26.dp)
+        Spacer(Modifier.height(2.dp))
+        Text(Demo.kor(inst), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = fg, maxLines = 1)
     }
 }
 

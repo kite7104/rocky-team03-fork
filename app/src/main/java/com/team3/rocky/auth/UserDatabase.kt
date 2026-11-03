@@ -76,6 +76,26 @@ class UserDatabase(context: Context, name: String? = DB_NAME) :
     fun findCredentials(email: String): Pair<User, String?>? =
         query("$C_EMAIL = ?", email) { it.toUser() to it.getStringOrNull(C_PASSWORD_HASH) }
 
+    /** 닉네임과 연주하는 악기를 바꾼다. 닉네임이 이미 있으면 [DuplicateException]. */
+    fun updateProfile(id: Long, nickname: String, instruments: List<String>) {
+        val values = ContentValues().apply {
+            put(C_NICKNAME, nickname)
+            put(C_INSTRUMENTS, instruments.joinToString(","))
+        }
+        try {
+            writableDatabase.updateWithOnConflict(T_USERS, values, "$C_ID = ?", arrayOf(id.toString()), SQLiteDatabase.CONFLICT_ABORT)
+        } catch (e: SQLiteConstraintException) {
+            throw DuplicateException(C_NICKNAME)
+        }
+    }
+
+    /** 다른 회원이 이 닉네임을 쓰고 있는지 (내 닉네임은 빼고 본다). */
+    fun nicknameTakenByOther(nickname: String, myId: Long): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM $T_USERS WHERE $C_NICKNAME = ? COLLATE NOCASE AND $C_ID != ? LIMIT 1",
+            arrayOf(nickname, myId.toString()),
+        ).use { it.moveToFirst() }
+
     fun updateLastLogin(id: Long, now: Long) {
         val values = ContentValues().apply { put(C_LAST_LOGIN_AT, now) }
         writableDatabase.update(T_USERS, values, "$C_ID = ?", arrayOf(id.toString()))
