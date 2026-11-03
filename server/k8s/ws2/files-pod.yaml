@@ -1,5 +1,5 @@
-# CPU-only transfer pod for the second workspace. Pinned to ford: the hostpath volume
-# stays on the node of the first pod that uses it, so every pod there must use ford.
+# CPU-only transfer pod for the second workspace (gpu22). It mounts rocky-data, the 40Gi
+# volume Soobin made on ford (the 50Gi quota leaves no room for a second volume).
 apiVersion: v1
 kind: Pod
 metadata:
@@ -12,7 +12,7 @@ spec:
   volumes:
     - name: data
       persistentVolumeClaim:
-        claimName: muscriptor-data
+        claimName: rocky-data
   containers:
     - name: app
       image: debian:bookworm

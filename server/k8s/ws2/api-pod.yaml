@@ -12,7 +12,7 @@ metadata:
   labels:
     app: rocky-api
 spec:
-  # second workspace: its muscriptor-data volume lives on ford
+  # second workspace: its volume rocky-data lives on ford
   nodeSelector:
     kubernetes.io/hostname: ford
   restartPolicy: Always
@@ -23,7 +23,7 @@ spec:
   volumes:
     - name: data
       persistentVolumeClaim:
-        claimName: muscriptor-data
+        claimName: rocky-data
   containers:
     - name: api
       image: python:3.12-slim
@@ -43,6 +43,9 @@ spec:
         # GPU and PDF Pods go to the node that holds this workspace's volume
         - name: ROCKY_NODE
           value: ford
+        # the GPU and PDF Pods mount the same volume
+        - name: ROCKY_PVC
+          value: rocky-data
         # one GPU per workspace: one song at a time, the rest wait in order
         - name: ROCKY_PARALLEL
           value: "1"
