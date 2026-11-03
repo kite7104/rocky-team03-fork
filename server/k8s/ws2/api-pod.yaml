@@ -45,6 +45,9 @@ spec:
         # one GPU per workspace: one song at a time, the rest wait in order
         - name: ROCKY_PARALLEL
           value: "1"
+        # whole songs as WAV are large (a 6-minute WAV is about 60 MB)
+        - name: ROCKY_MAX_UPLOAD_MB
+          value: "200"
         # No API key: the API is reachable only through kubectl port-forward.
         # If it is ever exposed publicly, set ROCKY_API_KEY from a Secret.
       ports:
