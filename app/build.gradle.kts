@@ -22,7 +22,8 @@ android {
 
     defaultConfig {
         applicationId = "com.team3.rocky"
-        minSdk = 34
+        // 팀 시연 갤럭시가 안드로이드 13(API 33)이라 낮춤. NewApi 검사는 lint가 CI에서 막는다.
+        minSdk = 26
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
@@ -43,6 +44,11 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+    lint {
+        // 최소 버전(26)보다 새 안드로이드에만 있는 기능을 쓰면 빌드를 멈춘다.
+        checkOnly += "NewApi"
+        abortOnError = true
     }
     buildFeatures {
         compose = true
