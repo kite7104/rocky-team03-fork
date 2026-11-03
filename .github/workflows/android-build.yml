@@ -87,8 +87,7 @@ jobs:
           arch: x86_64
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          # Only the server end-to-end test: auth/AuthFlowTest no longer matches the reworked sign-up screen.
-          script: chmod +x ./gradlew && ./gradlew connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.team3.rocky.server.ServerEndToEndTest
+          script: chmod +x ./gradlew && ./gradlew connectedDebugAndroidTest
       - name: Upload reports and server log
         if: always()
         uses: actions/upload-artifact@v4
