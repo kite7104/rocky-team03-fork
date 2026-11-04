@@ -84,14 +84,15 @@ cd ~/rocky-app-server
 
 ## B. 워크스페이스 2 준비 (오늘 한 번, 노트북 하나에서 — 두 계정 모두 로그인된 노트북)
 
-### B-1. 볼륨과 파일 Pod 만들기
+### B-1. 파일 Pod 만들기 (볼륨은 수빈이 만든 `rocky-data`를 씀 — 50Gi 할당량이라 새 볼륨은 못 만듦)
 ```bash
 cd ~/rocky-app-server
-k22 apply -f server/k8s/ws2/volume.yaml
-k22 apply -f server/k8s/ws2/files-pod.yaml
+k22 get pod rocky-files || k22 apply -f server/k8s/ws2/files-pod.yaml
 k22 wait --for=condition=Ready pod/rocky-files --timeout=300s
-k22 get pvc,pod                 # muscriptor-data: Bound, rocky-files: Running
+k22 get pvc,pod                 # rocky-data: Bound, rocky-files: Running
+k22 exec rocky-files -- df -h /data      # 여유 20G 이상이어야 함
 ```
+- `rocky-data`에 있는 수빈 폴더(models, envs, par, rwc 등)는 건드리지 않는다. 복사 전에 수빈에게 알리기
 
 ### B-2. 워크스페이스 1의 모델·환경을 2로 복사
 먼저 크기 확인 (워크스페이스 1에 rocky-files 가 없으면 `k5 apply -f server/k8s/files-pod.yaml`):
