@@ -23,6 +23,7 @@ PIPELINE_TO_APP = {
     "bs_roformer": "SEPARATE",
     "demucs": "SEPARATE",
     **{f"muscriptor_{s}": "TRANSCRIBE" for s in TRANSCRIBE_STEMS},
+    "muscriptor_batch": "TRANSCRIBE",  # contract 10: all stems in one stage
     "merge_stems": "BEATS",
     "beat_this": "BEATS",
     "align": "BEATS",
@@ -59,6 +60,11 @@ def stems_to_transcribe(manifest: dict) -> tuple[str, ...]:
     return stems or TRANSCRIBE_STEMS
 
 
+def stem_done(stem: str, completed) -> bool:
+    """Contract 10 records one muscriptor_batch stage; older runs one stage per stem."""
+    return "muscriptor_batch" in completed or f"muscriptor_{stem}" in completed
+
+
 def transcription_chunks(run: Path, completed_stages: list[str], stems=TRANSCRIBE_STEMS) -> tuple[int, int]:
     """(chunks done, chunks total) summed over the transcribed stems."""
     per_stem_total = 0
@@ -67,7 +73,7 @@ def transcription_chunks(run: Path, completed_stages: list[str], stems=TRANSCRIB
         line = last_progress_line(run / "stem_midi" / f"{stem}.progress.jsonl")
         if line:
             per_stem_total = max(per_stem_total, int(line.get("total") or 0))
-        if f"muscriptor_{stem}" in completed_stages:
+        if stem_done(stem, completed_stages):
             done += int(line.get("total") or 0) if line else 0
         elif line:
             done += int(line.get("completed") or 0)
@@ -80,7 +86,7 @@ def current_app_stage(completed: list[str], stems=TRANSCRIBE_STEMS) -> str:
     done = set(completed)
     if not done & set(SEPARATION_STAGES):
         return "SEPARATE"
-    if not all(f"muscriptor_{s}" in done for s in stems):
+    if not all(stem_done(s, done) for s in stems):
         return "TRANSCRIBE"
     if not {"merge_stems", "beat_this", "align"} <= done:
         return "BEATS"

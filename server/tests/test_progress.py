@@ -91,3 +91,18 @@ def test_extra_guitar_parts_are_listed(tmp_path):
     r = result_files(tmp_path)
     assert {"guitar_1", "guitar_2"} <= set(r["instruments"])
     assert r["instruments"]["guitar_2"]["mp3"] == "scores/guitar_2.mp3"
+
+
+def test_contract_10_batch_transcription_stage(tmp_path):
+    # contract 10 transcribes all stems in one "muscriptor_batch" stage
+    write_manifest(tmp_path, ["bs_roformer"])
+    for s in STEMS:
+        write_progress(tmp_path, s, 10, 30)
+    p = run_progress(tmp_path, 10)
+    assert (p["stage"], p["completed"], p["total"]) == ("TRANSCRIBE", 40, 120)
+    write_manifest(tmp_path, ["bs_roformer", "muscriptor_batch"])
+    assert run_progress(tmp_path, 10)["stage"] == "BEATS"
+    write_manifest(tmp_path, ["bs_roformer", "muscriptor_batch", "merge_stems", "beat_this", "align",
+                              "guitar_tab", "bass_tab"])
+    p = run_progress(tmp_path, 10)
+    assert p["stage"] == "ARRANGE" and p["completed"] == 2   # batch stage is not counted as arrange work
