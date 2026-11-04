@@ -4,7 +4,7 @@
 폰1 ─USB─ 노트북1(재욱, 계정 gpu05) ─port-forward─ 워크스페이스 1의 rocky-api ─ GPU(ferrari)
 폰2 ─USB─ 노트북2(채연, 계정 gpu22) ─port-forward─ 워크스페이스 2의 rocky-api ─ GPU(ford)
 ```
-- **11/4 시연은 두 노트북 모두 gpu05 하나로 한다** (gpu22 데이터 복사가 오래 걸려 중단). 그날 순서는 `DEMO_jaewook_ko.md`
+- 11/4 시연은 두 노트북 모두 gpu05 하나로 했다 (그날 순서는 `DEMO_jaewook_ko.md`). **gpu22는 11/4 저녁 B·C 단계 완료** — 수빈 볼륨 `rocky-data`에 복사(여유 약 7.4G), `rocky-api` 가동. 파이프라인을 바꾸면 두 볼륨 모두 반영
 - **팀 계정은 Pod는 만들 수 있지만 권한(Role/RoleBinding)은 못 준다 (11/3 확인).** 그래서 서버 Pod가 GPU Pod를 직접 못 만들고,
   **각 노트북에서 도는 agent(`server/agent/rocky_agent.py`)가 노트북 로그인 권한으로 GPU·PDF Pod를 대신 띄운다.**
   시연 중에는 노트북마다 터미널 2개(port-forward, agent)를 켜 둔다
