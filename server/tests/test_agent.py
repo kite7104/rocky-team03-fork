@@ -84,7 +84,12 @@ def test_song_completes_through_laptop_agent(server):
         import httpx
         result = httpx.get(f"{url}/jobs/{job_id}/result").json()
         assert result["full_band"]["mp3"] == "scores/band.mp3"
-        # both Pods were deleted after they finished (GPU released)
+        # both Pods were deleted after they finished (GPU released). The agent
+        # reports "done" first and deletes the Pod right after, so allow a moment.
+        for _ in range(50):
+            if not list((tmp / "kube").glob("*.json")):
+                break
+            time.sleep(0.1)
         assert not list((tmp / "kube").glob("*.json"))
         log = store.log(job_id).read_text()
         assert "rocky-midi-" in log and "rocky-pdf-" in log
