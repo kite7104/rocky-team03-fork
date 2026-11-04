@@ -75,7 +75,7 @@ python3 --version                # agent 실행용. 3.8 이상이면 OK (맥 기
 ### A-5. 코드 받기
 ```bash
 cd ~
-git clone -b feature/app-server-v2 https://github.com/kite7104/rocky-team03-fork rocky-app-server
+git clone -b feature/app-server-v2 https://github.com/snuhcs-course/swpp-2026-project-team-03 rocky-app-server
 cd ~/rocky-app-server
 ```
 (이미 받았다면 `cd ~/rocky-app-server && git pull`)

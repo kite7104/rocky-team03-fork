@@ -20,7 +20,7 @@
 | adb | `adb version` | 아래 PATH 한 줄. 그래도 없으면 Android Studio → Settings → Android SDK → SDK Tools → **Android SDK Platform-Tools** 설치 |
 ```bash
 export PATH="$HOME/Library/Android/sdk/platform-tools:$PATH"     # 맥, adb가 안 잡힐 때
-git clone -b feature/app-server-v2 https://github.com/kite7104/rocky-team03-fork rocky-app-server
+git clone -b feature/app-server-v2 https://github.com/snuhcs-course/swpp-2026-project-team-03 rocky-app-server
 ```
 - 폰: **USB 디버깅 켜기** (설정 → 휴대전화 정보 → 소프트웨어 정보 → 빌드번호 7번 → 개발자 옵션 → USB 디버깅), 맥에 꽂고 "항상 허용"
 - 폰 두 대에 앱(team3_ROCKY.apk)과 음원(다운로드/band_songs 12곡)은 채연이 넣어 둠
